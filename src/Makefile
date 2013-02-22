@@ -11,7 +11,7 @@
 #
 all: wavesolv wavesolv_serial
 
-wavesolv: 
+wavesolv: wavesolv.c 
 	gcc wavesolv.c -o wavesolv $(CONFIG)
 
 wavesolv_serial:
@@ -22,9 +22,9 @@ clean:
 tidy: clean
 	rm -f *.*~ *~
 
-DEBUG_FLAGS = -g3 -ggdb -O0 -Wall -pedantic -DDEBUG -fopenmp -lm
+DEBUG_FLAGS = -g3 -ggdb -O0 -DDEBUG -Wall -pedantic -lm 
 CONFIG		= -Wall -pedantic -lm
-PARCONFIG	= $(CONFIG) -DPARALLEL
+PARCONFIG	= $(CONFIG) -DPARALLEL -fopenmp
 EASY_FLAGS	= -lm
 
 debug: CONFIG=$(DEBUG_FLAGS)
