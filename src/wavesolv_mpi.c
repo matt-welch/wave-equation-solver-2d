@@ -14,6 +14,7 @@
 # include <string.h> /* memset */
 # include <math.h>   
 # include <omp.h>
+# include <mpi.h>
 # include <time.h>
 # include <sys/time.h>
 
@@ -23,7 +24,12 @@ int		getNextValue(int u1, int u0, int u1e, int u1s, int u1w, int u1n, double r);
 int		findMaxMag(int** u, int domSize);
 
 int main(int argc, char* argv[]) {
+
     /* declare variables */
+	/* MPI Variables */	
+	int numprocs, rank, chunk_size;
+	MPI_Status status;
+	
 	/* declare t, x, y as shorts to index the domain */
     unsigned short x, y;
 	unsigned short dt, dx, dy; /* step size for t, x, y*/
@@ -68,7 +74,10 @@ int main(int argc, char* argv[]) {
     gettimeofday(&start, NULL);
     
     /* Initialize MPI */
-	
+	MPI_Init( &argc,&argv);
+	MPI_Comm_rank( MPI_COMM_WORLD, &rank);
+	MPI_Comm_size( MPI_COMM_WORLD, &numprocs);
+
 	/* duration of simulation(steps), width, and height of domain */ 
     tmax = atoi(argv[1]); 
     domSize = xmax = ymax = 480 + 2; /* two greater than 480 for ghost rows*/ 
@@ -225,6 +234,7 @@ int main(int argc, char* argv[]) {
 	printf("pulseCount=%d\n",pulseCount);
 
 	/* finalize MPI */
+	MPI_Finalize();
 
     /* timekeeping */ 
     gettimeofday(&end, NULL);
