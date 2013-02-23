@@ -1,3 +1,6 @@
+# use glob syntax.
+syntax: glob
+*~
 CSE494Project2S13(1).pdf
 CSE494Project2S13.pdf
 amend.txt
@@ -5,7 +8,7 @@ tags
 wavesolv
 wavesolv_mpi
 CSE494Project2S13\(1\).pdf
-plot_wave.asv
+*.asv
 output.txt
 domain_analysis.xls
 allocateArray.c

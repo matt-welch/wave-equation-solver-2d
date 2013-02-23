@@ -16,7 +16,7 @@
 # include <omp.h>
 # include <time.h>
 # include <sys/time.h>
-
+#define NOLEAKS
 /* function prototypes */
 double	checkCFL(int dx, int dy, int dt);
 int		getNextValue(int u1, int u0, int u1e, int u1s, int u1w, int u1n, double r);
@@ -34,8 +34,11 @@ int main(int argc, char* argv[]) {
      * u1 is the array representing the domain for iteration l
      * u2 is the array representing the domain for iteration l+1 */
     int ** u0;
-    int ** u1;
-    int ** u2; 
+	int ** u1;
+	int ** u2;
+	int ** A;		/* temporary arrays for allocation and free */
+	int ** B;
+	int ** C;
 	int ** utemp;
     
 	/* Pulse Height and cutoffs */
@@ -43,7 +46,7 @@ int main(int argc, char* argv[]) {
 	int pulseThresh;		/* magnitude at which new pulse happens */
 	double pulseThreshPct;	/* percentage of last pulse when next pulse happens*/
 	int maxMag;				/* maximum magnitude of the wave @ current time step */
-	int pulseCount=0;		/* the number of pulses emitted, track t compare to mesh plot */
+	int pulseCount=0;		/* the number of pulses emitted, track to compare to mesh plot */
 	short pulseSide=0;		/* the side where the pulse comes from 0-3*/
 
     /* c is the wave velocity - unused  
@@ -70,13 +73,19 @@ int main(int argc, char* argv[]) {
     /* Initialize MPI */
 	
 	/* duration of simulation(steps), width, and height of domain */ 
-    tmax = atoi(argv[1]); 
+    if(argc > 1)
+		tmax = atoi(argv[1]);
+	else
+		tmax = 100;	
     domSize = xmax = ymax = 480 + 2; /* two greater than 480 for ghost rows*/ 
 	xmid = ymid = (domSize / 2) - 1; /* midpoint of the domain */
 
 	/* pulse size and threshhold at which next pulse happens */
-	pulse = atoi(argv[2]);
-	pulseThreshPct = 0.2; /* 20% of intitial pulse height */ 
+	if(argc > 2)
+		pulse = atoi(argv[2]);
+	else 
+		pulse = 10000;
+	pulseThreshPct = 0.5; /* 20% of intitial pulse height */ 
 	pulseThresh = pulse * pulseThreshPct;
 
 	/* step sizes for t, x, & y*/
@@ -89,44 +98,47 @@ int main(int argc, char* argv[]) {
    
 	/* allocate memory for arrays */
 	/* u0 = u(l-1)*/
-	u0 = malloc(domSize * sizeof(int *) );
-	if(u0 == NULL){
+	A = malloc(domSize * sizeof(int *) );
+	if(A == NULL){
 		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
 	}
 	for(i=0; i < domSize; ++i){
-		u0[i] = malloc(domSize * sizeof(int));
-		if(u0 == NULL){
+		A[i] = malloc(domSize * sizeof(int));
+		if(A == NULL){
 			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
 		}else{
-			memset(u0[i], 0,domSize); 
+			memset(A[i], 0,domSize); 
 		}
 	}
+	u0 = A;
 	/* u1 = u(l)*/
-	u1 = malloc(domSize * sizeof(int *) );
-	if(u1 == NULL){
+	B = malloc(domSize * sizeof(int *) );
+	if(B == NULL){
 		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
 	}
 	for(i=0; i < domSize; ++i){
-		u1[i] = malloc(domSize * sizeof(int));
-		if(u1 == NULL){
+		B[i] = malloc(domSize * sizeof(int));
+		if(B == NULL){
 			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
 		}else{
-			memset(u1[i], 0,domSize); 
+			memset(B[i], 0,domSize); 
 		}
 	}
+	u1 = B;
 	/* u2 = u(l+1)*/
-	u2 = malloc(domSize * sizeof(int *) );
-	if(u2 == NULL){
+	C = malloc(domSize * sizeof(int *) );
+	if(C == NULL){
 		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
 	}
 	for(i=0; i < domSize; ++i){
-		u2[i] = malloc(domSize * sizeof(int));
-		if(u2 == NULL){
+		C[i] = malloc(domSize * sizeof(int));
+		if(C == NULL){
 			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
 		}else{
-			memset(u2[i], 0,domSize); 
+			memset(C[i], 0,domSize); 
 		}
 	}
+	u2 = C;
 
     /* loop through time at single step intervals */
     for(l = 0; l < tmax; ++l){ 
@@ -166,8 +178,14 @@ int main(int argc, char* argv[]) {
 				printf("PULSE @ (%d.%d), replacing u1=%d\n", x,y, u1[x][y]);
 #endif
 				/* insert a pulse at the edge of the domain */
-				u1[x][y] = u1[x+1][y] = u1[x][y+1] = u1[x-1][y] = pulse;
 
+#ifdef WIDEPULSE
+				/* wide pulse */
+				u1[x][y] = u1[x+1][y] = u1[x][y+1] = u1[x-1][y] = pulse;
+#else
+				/* narrow pulse */
+				u1[x][y] = pulse;
+#endif
 				pulseCount++;
 			}
 		}
@@ -200,26 +218,24 @@ int main(int argc, char* argv[]) {
     }
 	fclose(fp);
     
-#ifdef NOLEAKS 
 	/* free memory for arrays */
 	/* free memory for u0 */
 	for(i=0; i < domSize; ++i){
-		free(u0[i]);
+		free(A[i]);
 	}
-	free(u0);
+	free(A);
 
 	/* free memory for u1 */
 	for(i=0; i < domSize; ++i){
-		free(u1[i]);
+		free(B[i]);
 	}
-	free(u1);
+	free(B);
 	
 	/* free memory for u2 */
 	for(i=0; i < domSize; ++i){
-		free(u2[i]);
+		free(C[i]);
 	}
-	free(u2);
-#endif
+	free(C);
 
 	/* print total number of pulses */
 	printf("pulseCount=%d\n",pulseCount);
