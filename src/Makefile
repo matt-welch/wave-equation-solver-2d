@@ -9,41 +9,31 @@
 # * TERM:        Spring 2013
 # *******************************************************************************/
 #
-all: wavesolv wavesolv_serial
+all: wavesolv_mpi wavesolv_serial
 
-wavesolv: wavesolv.c 
+wavesolv_serial: wavesolv.c 
 	gcc wavesolv.c -o wavesolv $(CONFIG)
 
-wavesolv_serial:
+wavesolv_mpi: wavesolv_mpi.c
+	mpicc wavesolv_mpi.c -o wavesolv_mpi $(PAR_CONFIG)
 
 clean:
-	rm -f wavesolv *.o core core.*
+	rm -f wavesolv wavesolv_mpi *.o core core.*
 
 tidy: clean
 	rm -f *.*~ *~
 
 DEBUG_FLAGS = -g3 -ggdb -O0 -DDEBUG -Wall -pedantic -lm 
 CONFIG		= -Wall -pedantic -lm
-PARCONFIG	= $(CONFIG) -DPARALLEL -fopenmp
+PARCONFIG	= $(CONFIG) -DPARALLEL -fopenmp 
 EASY_FLAGS	= -lm
 
 debug: CONFIG=$(DEBUG_FLAGS)
-debug: wavesolv
+debug: wavesolv wavesolv_mpi
 
 easy: CONFIG=$(EASY_FLAGS)
-easy: wavesolv
-
-option1: CONFIG= -O0 -lm -DQUIET
-option1: wavesolv
-
-option2: CONFIG= -O3 -lm -DQUIET
-option2: wavesolv
-
+easy: wavesolv wavesolv_mpi
 
 quiet: CONFIG=$(EASY_FLAGS) -DQUIET
 quiet: all
 
-test: quiet 
-	time ./wavesolv 1000
-	time ./wavesolv_parallel 1000
-	
