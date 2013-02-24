@@ -71,14 +71,6 @@ int main(int argc, char* argv[]) {
     
     /* Initialize MPI */
 	
-	/* pulse size and threshhold at which next pulse happens */
-	if(argc > 2)
-		pulse = atoi(argv[2]);
-	else 
-		pulse = 10;
-	pulseThreshPct = 0.2; /* 20% of intitial pulse height */ 
-	pulseThresh = pulse * pulseThreshPct;
-
 	/* duration of simulation(steps), width, and height of domain */ 
 	if(argc > 1)
 		tmax = atoi(argv[1]);
@@ -86,6 +78,14 @@ int main(int argc, char* argv[]) {
 		tmax = 100;	
 	domSize = xmax = ymax = 480 + 2; /* two greater than 480 for ghost rows*/ 
 	xmid = ymid = (domSize / 2) - 1; /* midpoint of the domain */
+
+	/* pulse size and threshhold at which next pulse happens */
+	if(argc > 2)
+		pulse = atoi(argv[2]);
+	else 
+		pulse = 10;
+	pulseThreshPct = 0.2; /* 20% of intitial pulse height */ 
+	pulseThresh = pulse * pulseThreshPct;
 
 	/* step sizes for t, x, & y*/
 	dt = 42; /* 42 */
@@ -138,7 +138,7 @@ int main(int argc, char* argv[]) {
 		}
 	}
 	u2 = C;
-	
+
 	/* loop through time at single step intervals */
 	for(l = 0; l < tmax; ++l){ 
  		/* If a certain number of periods have elapsed, begin emitting pulses */
@@ -183,7 +183,7 @@ int main(int argc, char* argv[]) {
 				u1[x][y] = u1[x+1][y] = u1[x][y+1] = u1[x-1][y] = pulse;
 #else
 				/* narrow pulse */
-				u1[xmid][ymid] = pulse;
+				u1[x][y] = pulse;
 #endif
 				pulseCount++;
 			}
