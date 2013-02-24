@@ -15,7 +15,7 @@ wavesolv_serial: wavesolv.c
 	gcc wavesolv.c -o wavesolv $(CONFIG)
 
 wavesolv_mpi: wavesolv_mpi.c
-	mpicc wavesolv_mpi.c -o wavesolv_mpi $(PAR_CONFIG)
+	mpicc wavesolv_mpi.c -o wavesolv_mpi $(PARCONFIG)
 
 clean:
 	rm -f wavesolv wavesolv_mpi *.o core core.*
@@ -29,11 +29,16 @@ PARCONFIG	= $(CONFIG) -DPARALLEL -fopenmp
 EASY_FLAGS	= -lm
 
 debug: CONFIG=$(DEBUG_FLAGS)
-debug: wavesolv wavesolv_mpi
+debug: wavesolv_serial wavesolv_mpi
 
 easy: CONFIG=$(EASY_FLAGS)
-easy: wavesolv wavesolv_mpi
+easy: wavesolv_serial wavesolv_mpi
 
 quiet: CONFIG=$(EASY_FLAGS) -DQUIET
 quiet: all
 
+test: wavesolv_serial
+	./wavesolv 100 1000000
+
+runmpi: wavesolv_mpi
+	mpiexec -n 4 ./wavesolv_mpi
