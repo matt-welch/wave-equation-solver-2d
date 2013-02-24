@@ -19,12 +19,10 @@
 # include <sys/time.h>
 
 /* function prototypes */
-double	checkCFL(int dx, int dy, int dt);
-int		getNextValue(int u1, int u0, int u1e, int u1s, int u1w, int u1n, double r);
-int		findMaxMag(int** u, int domSize);
-
+double	checkCFL(double dx, double dy, double dt);
+double	getNextValue(double u1, double u0, double u1e, double u1s, double u1w, double u1n, double r);
+double	findMaxMag(double** u, int domSize);
 int main(int argc, char* argv[]) {
-
     /* declare variables */
 	/* MPI Variables */	
 	int numprocs, myrank, chunk_size;
@@ -35,23 +33,23 @@ int main(int argc, char* argv[]) {
 	unsigned short dt, dx, dy; /* step size for t, x, y*/
     unsigned short tmax, xmax, ymax, xmid, ymid, domSize;  
     
-    /* u is the wave magnitude as an int for 32-bits of accuracy 
+    /* u is the wave magnitude as an double for best accuracy 
      * u0 is the array representing the domain for iteration l-1
      * u1 is the array representing the domain for iteration l
      * u2 is the array representing the domain for iteration l+1 */
-    int ** u0;
-	int ** u1;
-	int ** u2;
-	int ** A;		/* temporary arrays for allocation and free */
-	int ** B;
-	int ** C;
-	int ** utemp;
+	double ** u0;
+	double ** u1;
+	double ** u2;
+	double ** A;		/* temporary arrays for allocation and free */
+	double ** B;
+	double ** C;
+	double ** utemp;
     
 	/* Pulse Height and cutoffs */
-	int pulse;				/* magnitude of pulses */
-	int pulseThresh;		/* magnitude at which new pulse happens */
+	double pulse;				/* magnitude of pulses */
+	double pulseThresh;		/* magnitude at which new pulse happens */
 	double pulseThreshPct;	/* percentage of last pulse when next pulse happens*/
-	int maxMag;				/* maximum magnitude of the wave @ current time step */
+	double maxMag;				/* maximum magnitude of the wave @ current time step */
 	int pulseCount=0;		/* the number of pulses emitted, track to compare to mesh plot */
 	short pulseSide=0;		/* the side where the pulse comes from 0-3*/
 
@@ -82,24 +80,24 @@ int main(int argc, char* argv[]) {
 	MPI_Comm_size( MPI_COMM_WORLD, &numprocs);
 
 	if(myrank == 0){
-		printf("I am the master (proc %d)!  Luke, I am your father, accept your destiny!!!\n", myrank);
+		printf("I am the master (proc %d)!\n", myrank);
 	}else if(myrank > 0){
 		printf("My rank is a lowly %d, pity me!\n",myrank);
 	}
 
 	/* duration of simulation(steps), width, and height of domain */
-	if(argc > 2)
+	if(argc > 1)
 		tmax = atoi(argv[1]);
 	else
 		tmax = 100;	
-    domSize = xmax = ymax = 480 + 2; /* two greater than 480 for ghost rows*/ 
+	domSize = xmax = ymax = 480 + 2; /* two greater than 480 for ghost rows*/ 
 	xmid = ymid = (domSize / 2) - 1; /* midpoint of the domain */
 
 	/* pulse size and threshhold at which next pulse happens */
-	if(argc > 3)
+	if(argc > 2)
 		pulse = atoi(argv[2]);
 	else 
-		pulse = 10000;
+		pulse = 10;
 	pulseThreshPct = 0.2; /* 20% of intitial pulse height */ 
 	pulseThresh = pulse * pulseThreshPct;
 
@@ -107,53 +105,54 @@ int main(int argc, char* argv[]) {
 	dt = 42; /* 42 */
 	dx = dy = 90;
 	CFL = checkCFL(dx, dy, dt);
-	r = (double)dt/(double)dx;
+	r = dt/dx;
 
 	printf("CFL = %3.3f\n", CFL);
    
 	/* allocate memory for arrays */
 	/* u0 = u(l-1)*/
-	A = malloc(domSize * sizeof(int *) );
+	A = malloc(domSize * sizeof(double *) );
 	if(A == NULL){
-		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(double));
 	}
 	for(i=0; i < domSize; ++i){
-		A[i] = malloc(domSize * sizeof(int));
+		A[i] = malloc(domSize * sizeof(double));
 		if(A == NULL){
-			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(double));
 		}else{
 			memset(A[i], 0,domSize); 
 		}
 	}
 	u0 = A;
 	/* u1 = u(l)*/
-	B = malloc(domSize * sizeof(int *) );
+	B = malloc(domSize * sizeof(double *) );
 	if(B == NULL){
-		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(double));
 	}
 	for(i=0; i < domSize; ++i){
-		B[i] = malloc(domSize * sizeof(int));
+		B[i] = malloc(domSize * sizeof(double));
 		if(B == NULL){
-			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(double));
 		}else{
 			memset(B[i], 0,domSize); 
 		}
 	}
 	u1 = B;
 	/* u2 = u(l+1)*/
-	C = malloc(domSize * sizeof(int *) );
+	C = malloc(domSize * sizeof(double *) );
 	if(C == NULL){
-		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(double));
 	}
 	for(i=0; i < domSize; ++i){
-		C[i] = malloc(domSize * sizeof(int));
+		C[i] = malloc(domSize * sizeof(double));
 		if(C == NULL){
-			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(double));
 		}else{
 			memset(C[i], 0,domSize); 
 		}
 	}
 	u2 = C;
+
 	/* loop through time at single step intervals */
 	for(l = 0; l < tmax; ++l){ 
  		/* If a certain number of periods have elapsed, begin emitting pulses */
@@ -178,9 +177,9 @@ int main(int argc, char* argv[]) {
 				}else if(pulseSide == 1){ /* north */
 					x=0; y=ymid;
 				}else if(pulseSide == 2){ /* east */
-					x=xmid; y=ymax;
+					x=xmid; y=domSize-1;
 				}else if(pulseSide == 3){ /* south */
-					x=xmax; y=ymid;
+					x=domSize-1; y=ymid;
 				}
 #else			
 				pulseSide=0;
@@ -189,7 +188,7 @@ int main(int argc, char* argv[]) {
 #endif
 				
 #ifdef DEBUG
-				printf("PULSE @ (%d.%d), replacing u1=%d\n", x,y, u1[x][y]);
+				printf("PULSE @ (%d,%d), replacing u1=%4.2f\n", x,y, u1[x][y]);
 #endif
 				/* insert a pulse at the edge of the domain */
 
@@ -227,7 +226,7 @@ int main(int argc, char* argv[]) {
 /*	fprintf(fp, "x\ty\tu\n"); */
     for(i = 1; i < (xmax-1); ++i){ 
         for(j = 1; j < (ymax-1); ++j){ 
-			fprintf(fp,"%d\t%d\t%d\n",i,j,u1[i][j]);
+			fprintf(fp,"%d\t%d\t%4.2f\n",i,j,u1[i][j]);
         }
     }
 	fclose(fp);
@@ -268,12 +267,11 @@ int main(int argc, char* argv[]) {
 /* function to check Courant-Friedrichs-Lewy condition 
  * for the wave equation solver to be stable, the value of c 
  * should be less than 1 */
-double checkCFL(int dx, int dy, int dt){ 
-    double dbl_dt = (double)dt;
-    return (dbl_dt/(double)dx + dbl_dt/(double)dy); 
+double checkCFL(double dx, double dy, double dt){ 
+    return (dt/dx + dt/dy); 
 }
 
-int getNextValue(int u1, int u0, int u1e, int u1s, int u1w, int u1n, double r){
+double getNextValue(double u1, double u0, double u1e, double u1s, double u1w, double u1n, double r){
     /* u(l-1,i,j)       = u0      (last center)
     *
      * u(l,i,j)         = u1      (center)
@@ -284,13 +282,14 @@ int getNextValue(int u1, int u0, int u1e, int u1s, int u1w, int u1n, double r){
      * 
      * u(l+1,i,j)       = u2        (solving for this)
     */
-	int value;
+	double value;
 	value = 2*u1 - u0 + r*r*(u1e + u1w + u1n + u1s - 4*u1) ;
-    return(abs(value)); 
+    return((value)); 
 }
 
-int findMaxMag(int** u, int domSize){
-	int i,j, maxMag=0;
+double findMaxMag(double** u, int domSize){
+	int i,j;
+	double maxMag=0;
 	for(i=0; i < domSize; ++i){
 		for(j=0; j<domSize; ++j){
 			if(u[i][j] > maxMag)
@@ -300,24 +299,24 @@ int findMaxMag(int** u, int domSize){
 	return maxMag;
 }
 
-void allocateArray(int **array, int domSize){
+void allocateArray(double **array, int domSize){
 	/* function takes a square input array and zeroes its contents 
 	 * assumes that the array has NOT YET been allocated 
 	 * TODO: consider using contiguous memory to allocate the array*/ 
 	int i;
-	array = malloc(domSize * sizeof(int *) );
+	array = malloc(domSize * sizeof(double *) );
 	if(array == NULL){
-		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(double));
 	}
 	for(i=0; i < domSize; ++i){
-		array[i] = malloc(domSize * sizeof(int));
+		array[i] = malloc(domSize * sizeof(double));
 		if(array == NULL){
-			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(double));
 		}
 	}
 }
 
-void freeArrays(int **array, int domSize){
+void freeArrays(double **array, int domSize){
 	/* function takes a square input array and zeroes its contents 
 	 * assumes that the array has NOT YET been allocated */ 
 	int i;
