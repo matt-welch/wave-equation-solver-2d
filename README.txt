@@ -53,6 +53,17 @@ Milestone 2:
         to include the output routine or run for all the time steps to get your
         performance data.
 
+Compile instructions: 
+On a regular computer, compilation can be performed with just "make".
+On the Saguaro cluster, the correct module must first be loaded with: 
+	module load mvapich2/1.6-intel
+Compilation may then be completed with make.
+
+Run Instructions: 
+On the cluster or a computer, the program should simply be run with: 
+	mpiexec -n numProcs ./wavesolv_mpi
+
+
 
  Project 2 was posted yesterday.  I have made some revisions and posted these today.  Specifically:
 1) Due date for Milestone 2 is now 3/17
