@@ -18,38 +18,44 @@
 # include <time.h>
 # include <sys/time.h>
 
+
 /* function prototypes */
-double	checkCFL(int dx, int dy, int dt);
-int		getNextValue(int u1, int u0, int u1e, int u1s, int u1w, int u1n, double r);
-int		findMaxMag(int** u, int domSize);
-
+double	checkCFL(double dx, double dy, double dt);
+double	getNextValue(double u1, double u0, double u1e, double u1s, double u1w, double u1n, double r);
+double	findMaxMag(double** u, int domSize);
 int main(int argc, char* argv[]) {
-
     /* declare variables */
 	/* MPI Variables */	
-	int numprocs, rank, chunk_size;
+	int numprocs, myrank, chunk_size;
 	MPI_Status status;
+	MPI_Comm comm_cart;
+	int ndims = 2;
+	int dims[2], period[2], reorder, coords[2];
 	
 	/* declare t, x, y as shorts to index the domain */
     unsigned short x, y;
 	unsigned short dt, dx, dy; /* step size for t, x, y*/
     unsigned short tmax, xmax, ymax, xmid, ymid, domSize;  
+	int myXmin, myXmax, myYmin, myYmax, myDomSize;
     
-    /* u is the wave magnitude as an int for 32-bits of accuracy 
+    /* u is the wave magnitude as an double for best accuracy 
      * u0 is the array representing the domain for iteration l-1
      * u1 is the array representing the domain for iteration l
      * u2 is the array representing the domain for iteration l+1 */
-    int ** u0;
-    int ** u1;
-    int ** u2; 
-	int ** utemp;
+	double ** u0;
+	double ** u1;
+	double ** u2;
+	double ** A;		/* temporary arrays for allocation and free */
+	double ** B;
+	double ** C;
+	double ** utemp;
     
 	/* Pulse Height and cutoffs */
-	int pulse;				/* magnitude of pulses */
-	int pulseThresh;		/* magnitude at which new pulse happens */
+	double pulse;				/* magnitude of pulses */
+	double pulseThresh;		/* magnitude at which new pulse happens */
 	double pulseThreshPct;	/* percentage of last pulse when next pulse happens*/
-	int maxMag;				/* maximum magnitude of the wave @ current time step */
-	int pulseCount=0;		/* the number of pulses emitted, track t compare to mesh plot */
+	double maxMag;				/* maximum magnitude of the wave @ current time step */
+	int pulseCount=0;		/* the number of pulses emitted, track to compare to mesh plot */
 	short pulseSide=0;		/* the side where the pulse comes from 0-3*/
 
     /* c is the wave velocity - unused  
@@ -70,100 +76,144 @@ int main(int argc, char* argv[]) {
 	/* file variables for output */
 	FILE *fp;
 
-    /* Get start time */
-    gettimeofday(&start, NULL);
-    
     /* Initialize MPI */
 	MPI_Init( &argc,&argv);
-	MPI_Comm_rank( MPI_COMM_WORLD, &rank);
+	MPI_Comm_rank( MPI_COMM_WORLD, &myrank);
 	MPI_Comm_size( MPI_COMM_WORLD, &numprocs);
+	
+	/* figure out dimensions bases on numproc */
+	if(numprocs == 1 || numprocs == 4 || numprocs == 16 || numprocs == 256 ){
+		/* squares are easy to partition */
+		dims[0] = dims[1] = (int)sqrt(numprocs); /* square domain */
+		if(myrank==0) printf("NumProcs = %d, dims = %d\n", numprocs, dims[0]);
+	}else{
+		/* error out if a non-square numproc has be requested */
+		if(myrank==0) printf("Please only request a square number of processors (%d requested).\n",numprocs); 
+		MPI_Abort(MPI_COMM_WORLD, 1);
+		return 0;
+	}
+	period[0] = period[1] = 1;
+	reorder = 1;
+	MPI_Cart_create(MPI_COMM_WORLD, ndims, dims, period, reorder, &comm_cart); 
 
-	/* duration of simulation(steps), width, and height of domain */ 
-    tmax = atoi(argv[1]); 
-    domSize = xmax = ymax = 480 + 2; /* two greater than 480 for ghost rows*/ 
+   	/* Get start time */
+    gettimeofday(&start, NULL);
+
+	/* identify individual processors in the communicator */
+	if(myrank == 0){
+		printf("I am the master (proc %d of %d)!\n", myrank, numprocs);
+	}else if(myrank > 0){
+		printf("My rank is %d of %d.\n",myrank, numprocs);
+	}
+	/* int MPI_Cart_coord(MPI_Comm comm_cart, int myrank, int maxdims, int *coords) */
+	MPI_Cart_coords(comm_cart, myrank, ndims, coords);
+	
+	/* duration of simulation(steps), width, and height of domain */
+	if(argc > 1)
+		tmax = atoi(argv[1]);
+	else
+		tmax = 100;	
+	domSize = xmax = ymax = 480 + 2; /* two greater than 480 for ghost rows*/ 
 	xmid = ymid = (domSize / 2) - 1; /* midpoint of the domain */
+	chunk_size = (domSize - 2)/dims[0];
+	myDomSize = chunk_size + 2;
 
 	/* pulse size and threshhold at which next pulse happens */
-	pulse = atoi(argv[2]);
+	if(argc > 2)
+		pulse = atoi(argv[2]);
+	else 
+		pulse = 10;
 	pulseThreshPct = 0.2; /* 20% of intitial pulse height */ 
 	pulseThresh = pulse * pulseThreshPct;
 
+	/* calculate the x & y coordinates of the node's subdomain */
+	myXmin =  chunk_size *  coords[0];
+	myXmax = (chunk_size * (coords[0]+1)) - 1;
+	myYmin =  chunk_size *  coords[1];
+	myYmax = (chunk_size * (coords[1]+1)) - 1;
+
+#if 1
+	printf("P%d, coords[%d,%d], x[%d,%d], y[%d,%d]\n", myrank, coords[0], coords[1], myXmin,myXmax,myYmin,myYmax);
+	fflush(stdout);
+#endif
 	/* step sizes for t, x, & y*/
 	dt = 42; /* 42 */
 	dx = dy = 90;
 	CFL = checkCFL(dx, dy, dt);
-	r = (double)dt/(double)dx;
+	r = dt/dx;
 
-	printf("CFL = %3.3f\n", CFL);
+	if(myrank==0) printf("CFL = %3.3f\n", CFL);
    
 	/* allocate memory for arrays */
 	/* u0 = u(l-1)*/
-	u0 = malloc(domSize * sizeof(int *) );
-	if(u0 == NULL){
-		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+	A = malloc(myDomSize * sizeof(double *) );
+	if(A == NULL){
+		printf("Error: P%d: malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double *));
 	}
-	for(i=0; i < domSize; ++i){
-		u0[i] = malloc(domSize * sizeof(int));
-		if(u0 == NULL){
-			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+	for(i=0; i < myDomSize; ++i){
+		A[i] = malloc(myDomSize * sizeof(double));
+		if(A == NULL){
+			printf("Error: P%d malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double));
 		}else{
-			memset(u0[i], 0,domSize); 
+			memset(A[i], 0,myDomSize); 
 		}
 	}
+	u0 = A;
 	/* u1 = u(l)*/
-	u1 = malloc(domSize * sizeof(int *) );
-	if(u1 == NULL){
-		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+	B = malloc(myDomSize * sizeof(double *) );
+	if(B == NULL){
+		printf("Error: P%d: malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double *));
 	}
-	for(i=0; i < domSize; ++i){
-		u1[i] = malloc(domSize * sizeof(int));
-		if(u1 == NULL){
-			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+	for(i=0; i < myDomSize; ++i){
+		B[i] = malloc(myDomSize * sizeof(double));
+		if(B == NULL){
+			printf("Error: P%d malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double));
 		}else{
-			memset(u1[i], 0,domSize); 
+			memset(B[i], 0,myDomSize); 
 		}
 	}
+	u1 = B;
 	/* u2 = u(l+1)*/
-	u2 = malloc(domSize * sizeof(int *) );
-	if(u2 == NULL){
-		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+	C = malloc(myDomSize * sizeof(double *) );
+	if(C == NULL){
+		printf("Error: P%d: malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double *));
 	}
-	for(i=0; i < domSize; ++i){
-		u2[i] = malloc(domSize * sizeof(int));
-		if(u2 == NULL){
-			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+	for(i=0; i < myDomSize; ++i){
+		C[i] = malloc(myDomSize * sizeof(double));
+		if(C == NULL){
+			printf("Error: P%d malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double));
 		}else{
-			memset(u2[i], 0,domSize); 
+			memset(C[i], 0,myDomSize); 
 		}
 	}
+	u2 = C;
 
-    /* loop through time at single step intervals */
-    for(l = 0; l < tmax; ++l){ 
- 		/* If a certain number of periods have elapsed, begin emitting pulses */
+	/* loop through time at single step intervals */
+	for(l = 0; l < tmax; ++l){ 
+		/* If a certain number of periods have elapsed, begin emitting pulses */
 		if (l > 9 ) {
-			maxMag = findMaxMag(u1,domSize);
-#ifdef DEBUG
-	#ifdef VERBOSE
+			/* START HERE:::  
+			 * MPI: determine maximum of each sub-domain and communicate them to the master
+			 * Use findMaxMag on each subdomain
+			 * shift each domain's boundaries to its neighbor
+			 * have master send a pulse message to the correct domain */
+			maxMag = findMaxMag(u1,myDomSize);
+#ifdef VERBOSE
 			printf("maxMag u1 = %d\n",maxMag);
-			maxMag = findMaxMag(u0,domSize);
-			printf("maxMag u0 = %d\n",maxMag);
-	    	maxMag = findMaxMag(u2,domSize);
-			printf("maxMag u2 = %d\n",maxMag);
-	#endif	
-#endif
-			if( maxMag < pulseThresh){ /* TODO: add unlikely() macro here to aid branch prediction */
+#endif	
+			if( maxMag < pulseThresh){
 			/* if maximum magnitude has degraded to pulseThreshPct of initial pulse magnitude,
-			 * TODO: introduce another pulse at next edge pulse direction starts at W, then N, E, S, W...*/
+			 * introduce another pulse at next edge pulse direction starts at W, then N, E, S, W...*/
 #ifdef MILE2
 				pulseSide = pulseCount % 4;
 				if(pulseSide == 0){ /* west */
-					x=xmid; y=1;
+					x=xmid; y=0;
 				}else if(pulseSide == 1){ /* north */
-					x=1; y=ymid;
+					x=0; y=ymid;
 				}else if(pulseSide == 2){ /* east */
-					x=xmid; y=ymax-1;
+					x=xmid; y=domSize-1;
 				}else if(pulseSide == 3){ /* south */
-					x=xmax-1; y=ymid;
+					x=domSize-1; y=ymid;
 				}
 #else			
 				pulseSide=0;
@@ -172,23 +222,43 @@ int main(int argc, char* argv[]) {
 #endif
 				
 #ifdef DEBUG
-				printf("PULSE @ (%d.%d), replacing u1=%d\n", x,y, u1[x][y]);
+				printf("p%d: PULSE @ (%d,%d), replacing u1=%4.2f\n", myrank, x, y, u1[x][y]);
 #endif
 				/* insert a pulse at the edge of the domain */
+#ifdef WIDEPULSE
+				/* wide pulse */
 				u1[x][y] = u1[x+1][y] = u1[x][y+1] = u1[x-1][y] = pulse;
-
+#else
+				/* narrow pulse */
+				u1[x][y] = pulse;
+#endif
 				pulseCount++;
 			}
 		}
 
-       /* update u - loop through x and y to calculate u at each point in the domain */
-        for(i = 1; i < (xmax-1); ++i){ 
-            for(j = 1; j < (ymax-1); ++j){ 
-				u2[i][j] = getNextValue(u1[i][j], u0[i][j], u1[i+1][j], u1[i][j+1], u1[i-1][j], u1[i][j-1], r);
-            }
-        }
+		/* update u - loop through x and y to calculate u at each point in the domain */
+		if(numprocs == 1){
+			for(i = 1; i < (xmax-1); ++i){ 
+        	    for(j = 1; j < (ymax-1); ++j){ 
+					u2[i][j] = getNextValue(u1[i][j], u0[i][j], u1[i+1][j], u1[i][j+1], u1[i-1][j], u1[i][j-1], r);
+        	    }
+        	}
+		}else{
+			for(i=myXmin+1; i <= myXmax+1; ++i){
+				for(j=myYmin+1; j <= myYmax+1; ++j){
+						
+				}
 
-		/* communicate array updates to other nodes */
+			}				
+			/* communicate array updates to other nodes 
+			 *
+			 * use a all-to-one reduce to communicate them to the master only
+			 * when writing the whole domain out to a file
+			 * */
+			/* use MPI_shift to determine the location of neighbor domain */
+
+		}
+
 
 		/* update the u-arrays so that u1/u(l) becomes u2/u(l+1) and 
 		 * u0/u(l-1) becomes u1/u(l) */
@@ -200,59 +270,58 @@ int main(int argc, char* argv[]) {
 	}
 
 	/* print the last iteration to a file */
-	fp=fopen("output.txt", "w+");
-/*	fprintf(fp, "x\ty\tu\n"); */
-    for(i = 1; i < (xmax-1); ++i){ 
-        for(j = 1; j < (ymax-1); ++j){ 
-			fprintf(fp,"%d\t%d\t%d\n",i,j,u1[i][j]);
-        }
-    }
-	fclose(fp);
-    
-#ifdef NOLEAKS 
+	if(myrank == 0){
+		fp=fopen("output.txt", "w+");
+	    for(i = 1; i < (xmax-1); ++i){ 
+	        for(j = 1; j < (ymax-1); ++j){ 
+				fprintf(fp,"%d\t%d\t%4.2f\n",i,j,u1[i][j]);
+	        }
+	    }
+		fclose(fp);
+	}
 	/* free memory for arrays */
 	/* free memory for u0 */
 	for(i=0; i < domSize; ++i){
-		free(u0[i]);
+		free(A[i]);
 	}
-	free(u0);
+	free(A);
 
 	/* free memory for u1 */
 	for(i=0; i < domSize; ++i){
-		free(u1[i]);
+		free(B[i]);
 	}
-	free(u1);
+	free(B);
 	
 	/* free memory for u2 */
 	for(i=0; i < domSize; ++i){
-		free(u2[i]);
+		free(C[i]);
 	}
-	free(u2);
-#endif
+	free(C);
 
 	/* print total number of pulses */
-	printf("pulseCount=%d\n",pulseCount);
+	printf("proc(%d) pulseCount=%d\n", myrank, pulseCount);
 
 	/* finalize MPI */
 	MPI_Finalize();
 
     /* timekeeping */ 
-    gettimeofday(&end, NULL);
-    seconds  = end.tv_sec  - start.tv_sec;
-    useconds = end.tv_usec - start.tv_usec;
-    preciseTime = seconds + useconds/1000000.0;
-    printf("Total Time = %3.4f\n", preciseTime );  
-    return 0;
+    if(myrank==0) {
+		gettimeofday(&end, NULL);
+		seconds  = end.tv_sec  - start.tv_sec;
+		useconds = end.tv_usec - start.tv_usec;
+		preciseTime = seconds + useconds/1000000.0;
+		printf("Total Time = %3.4f\n", preciseTime );  
+	}
+	return 0;
 }
 /* function to check Courant-Friedrichs-Lewy condition 
  * for the wave equation solver to be stable, the value of c 
  * should be less than 1 */
-double checkCFL(int dx, int dy, int dt){ 
-    double dbl_dt = (double)dt;
-    return (dbl_dt/(double)dx + dbl_dt/(double)dy); 
+double checkCFL(double dx, double dy, double dt){ 
+    return (dt/dx + dt/dy); 
 }
 
-int getNextValue(int u1, int u0, int u1e, int u1s, int u1w, int u1n, double r){
+double getNextValue(double u1, double u0, double u1e, double u1s, double u1w, double u1n, double r){
     /* u(l-1,i,j)       = u0      (last center)
     *
      * u(l,i,j)         = u1      (center)
@@ -263,13 +332,14 @@ int getNextValue(int u1, int u0, int u1e, int u1s, int u1w, int u1n, double r){
      * 
      * u(l+1,i,j)       = u2        (solving for this)
     */
-	int value;
+	double value;
 	value = 2*u1 - u0 + r*r*(u1e + u1w + u1n + u1s - 4*u1) ;
-    return(abs(value)); 
+    return((value)); 
 }
 
-int findMaxMag(int** u, int domSize){
-	int i,j, maxMag=0;
+double findMaxMag(double** u, int domSize){
+	int i,j;
+	double maxMag=0;
 	for(i=0; i < domSize; ++i){
 		for(j=0; j<domSize; ++j){
 			if(u[i][j] > maxMag)
@@ -279,24 +349,24 @@ int findMaxMag(int** u, int domSize){
 	return maxMag;
 }
 
-void allocateArray(int **array, int domSize){
+void allocateArray(double **array, int domSize){
 	/* function takes a square input array and zeroes its contents 
 	 * assumes that the array has NOT YET been allocated 
 	 * TODO: consider using contiguous memory to allocate the array*/ 
 	int i;
-	array = malloc(domSize * sizeof(int *) );
+	array = malloc(domSize * sizeof(double *) );
 	if(array == NULL){
-		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(double));
 	}
 	for(i=0; i < domSize; ++i){
-		array[i] = malloc(domSize * sizeof(int));
+		array[i] = malloc(domSize * sizeof(double));
 		if(array == NULL){
-			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(int));
+			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(double));
 		}
 	}
 }
 
-void freeArrays(int **array, int domSize){
+void freeArrays(double **array, int domSize){
 	/* function takes a square input array and zeroes its contents 
 	 * assumes that the array has NOT YET been allocated */ 
 	int i;
