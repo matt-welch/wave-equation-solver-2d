@@ -16,6 +16,9 @@
 # include <omp.h>
 # include <time.h>
 # include <sys/time.h>
+
+#define DEBUG
+
 /* function prototypes */
 double	checkCFL(double dx, double dy, double dt);
 double	getNextValue(double u1, double u0, double u1e, double u1s, double u1w, double u1n, double r);
@@ -88,7 +91,7 @@ int main(int argc, char* argv[]) {
 	pulseThresh = pulse * pulseThreshPct;
 
 	/* step sizes for t, x, & y*/
-	dt = 42; /* 42 */
+	dt = 40; /* 42 */
 	dx = dy = 90;
 	CFL = checkCFL(dx, dy, dt);
 	r = dt/dx;
@@ -145,8 +148,8 @@ int main(int argc, char* argv[]) {
 		if (l > 9 ) {
 			maxMag = findMaxMag(u1,domSize);
 #ifdef DEBUG
+			printf("maxMag u1 = %4.2f\n",maxMag);
 	#ifdef VERBOSE
-			printf("maxMag u1 = %d\n",maxMag);
 			maxMag = findMaxMag(u0,domSize);
 			printf("maxMag u0 = %d\n",maxMag);
 	    	maxMag = findMaxMag(u2,domSize);
@@ -170,11 +173,11 @@ int main(int argc, char* argv[]) {
 #else			
 				pulseSide=0;
 				x = xmid;
-				y = 0;
+				y = 1;
 #endif
 				
 #ifdef DEBUG
-				printf("PULSE @ (%d,%d), replacing u1=%4.2f\n", x,y, u1[x][y]);
+				printf("PULSE mag=%4.2f @ (%d,%d), replacing u1=%4.2f\n", pulse, x,y, u1[x][y]);
 #endif
 				/* insert a pulse at the edge of the domain */
 

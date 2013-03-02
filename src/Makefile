@@ -15,7 +15,7 @@ wavesolv_serial: wavesolv.c
 	gcc wavesolv.c -o wavesolv $(CONFIG)
 
 wavesolv_mpi: wavesolv_mpi.c
-	mpicc wavesolv_mpi.c -o wavesolv_mpi $(PARCONFIG)
+	mpicc wavesolv_mpi.c -o wavesolv_mpi $(CONFIG) $(PARCONFIG)
 
 clean:
 	rm -f wavesolv wavesolv_mpi *.o core core.*
@@ -25,7 +25,7 @@ tidy: clean
 
 DEBUG_FLAGS = -g3 -ggdb -O0 -DDEBUG -Wall -pedantic -lm 
 CONFIG		= -Wall -pedantic -lm
-PARCONFIG	= $(CONFIG) -DPARALLEL -fopenmp 
+PARCONFIG	= -DPARALLEL -fopenmp 
 EASY_FLAGS	= -lm
 
 debug: CONFIG=$(DEBUG_FLAGS)
@@ -41,4 +41,4 @@ test: wavesolv_serial
 	./wavesolv 100 1000000
 
 runmpi: wavesolv_mpi
-	mpiexec -n 4 ./wavesolv_mpi
+	mpiexec -n 4 ./wavesolv_mpi 30 100
