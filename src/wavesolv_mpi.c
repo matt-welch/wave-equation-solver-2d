@@ -28,6 +28,8 @@
 #define EXCHANGEDATA
 #define OUTPUT
 
+#define ARRVAL(u, i, j) u[(i)][(j)] 
+
 /* function prototypes */
 double	checkCFL(double dx, double dy, double dt);
 double	getNextValue(double u1, double u0, double u1e, double u1s, double u1w, double u1n, double r);
@@ -83,6 +85,7 @@ int main(int argc, char* argv[]) {
 	double pulseThreshPct;	/* percentage of last pulse when next pulse happens*/
 	double maxMag;				/* maximum magnitude of the wave @ current time step */
 	int pulseCount=0;	/* the number of pulses emitted, track to compare to mesh plot */
+	short * pulseTimes;	/* the time steps at which pulses happened (for debugging) */
 	unsigned short pulseSide=0;		/* the side where the pulse comes from 0-3*/
 	unsigned short lastPulseX = 0;	/* coordinates of the last pulse */
 	unsigned short lastPulseY = 0;
@@ -113,7 +116,7 @@ int main(int argc, char* argv[]) {
 	MPI_Comm_rank( MPI_COMM_WORLD, &myrank);
 	MPI_Comm_size( MPI_COMM_WORLD, &numprocs);
 
-		/* figure out dimensions bases on numproc */
+	/* figure out dimensions bases on numproc */
 	if(numprocs == 1 || numprocs == 4 || numprocs == 16 || numprocs == 256 ){
 		/* squares are easy to partition */
 		dims[0] = dims[1] = (int)sqrt(numprocs); /* square domain */
@@ -133,7 +136,7 @@ int main(int argc, char* argv[]) {
 	/* int MPI_Cart_coord(MPI_Comm comm_cart, int myrank, int maxdims, int *coords) */
 	MPI_Cart_coords(comm_cart, myrank, ndims, &coords);
 	
-	/* reset the rank to the cartesian communicator TODO verify the following function call */
+	/* reset the rank to the cartesian communicator */
 	MPI_Cart_rank(comm_cart, &coords, &myrank);
 	
 	if(myrank == 0){ /* Get start time */
@@ -246,8 +249,6 @@ int main(int argc, char* argv[]) {
 		printf("Error: P%d: malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double));
 	}
 
-
-
 	/* use MPI_shift to determine the location of neighbor domain */
 	source = myrank;   /* calling process rank in 2D communicator */
 	
@@ -351,9 +352,10 @@ int main(int argc, char* argv[]) {
 			}else if( (l - lastPulseT) > 2){
 				/* only erase the pulse if it has been present for 2 iterations */
 				/* zero out last pulse */
-				u0[lastPulseX][lastPulseY] = 0;
-				u1[lastPulseX][lastPulseY] = 0;
-				u2[lastPulseX][lastPulseY] = 0;
+				//u0[lastPulseX][lastPulseY] = 0;
+				ARRVAL(u0, lastPulseX, lastPulseY) = 0;
+				ARRVAL(u1, lastPulseX, lastPulseY) = 0;
+				ARRVAL(u2, lastPulseX, lastPulseY) = 0;
 			}
 #endif /* ISSUEPULSE */
 
@@ -363,14 +365,22 @@ int main(int argc, char* argv[]) {
 				printf("Numprocs=1, updating domain for one\n");
 				for(i = 1; i < (xmax-1); ++i){ 
         		    for(j = 1; j < (ymax-1); ++j){ 
-						u2[i][j] = getNextValue(u1[i][j], u0[i][j], u1[i+1][j], u1[i][j+1], u1[i-1][j], u1[i][j-1], r);
+						ARRVAL(u2, i, j) = getNextValue(ARRVAL(u1, i, j), 
+							ARRVAL(u0, i, j),   ARRVAL(u1, i+1, j), 
+							ARRVAL(u1, i, j+1), ARRVAL(u1, i-1, j), 
+							ARRVAL(u1, i, j-1), r);	
+						//u2[i][j] = getNextValue(u1[i][j], u0[i][j], u1[i+1][j], u1[i][j+1], u1[i-1][j], u1[i][j-1], r);
         		    }
         		}
 			}else{
 				fflush(stdout);
 				for(i=1; i <= chunk_size; ++i){
 					for(j=1; j <= chunk_size; ++j){
-						u2[i][j] = getNextValue(u1[i][j], u0[i][j], u1[i+1][j], u1[i][j+1], u1[i-1][j], u1[i][j-1], r);
+						ARRVAL(u2, i, j) = getNextValue(ARRVAL(u1, i, j), 
+							ARRVAL(u0, i, j), ARRVAL(u1, i+1, j), 
+							ARRVAL(u1, i, j+1), ARRVAL(u1, i-1, j), 
+							ARRVAL(u1, i, j-1), r);	
+						//u2[i][j] = getNextValue(u1[i][j], u0[i][j], u1[i+1][j], u1[i][j+1], u1[i-1][j], u1[i][j-1], r);
 					}
 				}
 			}
@@ -387,16 +397,16 @@ int main(int argc, char* argv[]) {
 				tag = NORTH;
 				/* gather the data to send */
 				for(i = 1; i < myDomSize-1; ++i){
-					myBorder[i-1] = u1[i][chunk_size];
+					myBorder[i-1] = ARRVAL(u1, i, chunk_size); //u1[i][chunk_size];
 				}
 				MPI_Send (myBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart);
 			}
-			if(nbors[SOUTH] > -1){
-				/* you have a south neighbor to rcv from */
+			if(nbors[SOUTH] > -1){/* you have a south neighbor to rcv from */
 				tag = NORTH;
 				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart, &status);
-				for(i = 1;i < myDomSize-1; ++i){
-					u1[i][0] = theirBorder[i-1];/* put their border in my ghost row */
+				for(i = 1;i < myDomSize-1; ++i){/* put their border in my ghost row */
+					ARRVAL(u1, i, 0) = theirBorder[i-1];
+					//u1[i][0] = theirBorder[i-1];
 				}
 
 
@@ -404,15 +414,16 @@ int main(int argc, char* argv[]) {
 				tag = SOUTH;
 				/* gather the data to send */
 				for(i = 1; i < myDomSize-1; ++i){
-					myBorder[i-1] = u1[i][0];
+					myBorder[i-1] = ARRVAL(u1, i, 0); //u1[i][0];
 				}
 				MPI_Send (myBorder, chunk_size, MPI_DOUBLE, nbors[SOUTH], tag, comm_cart);
 			}
 			if(nbors[NORTH] > -1){/* you have a north-neighbor to receive from */
 				tag = SOUTH;
 				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[SOUTH], tag, comm_cart, &status);
-				for(i = 1;i < myDomSize-1; ++i){
-					u1[i][chunk_size+1] = theirBorder[i-1];/* put their border in my ghost row */
+				for(i = 1;i < myDomSize-1; ++i){/* put their border in my ghost row */
+					ARRVAL(u1, i, chunk_size+1) = theirBorder[i-1];
+					//u1[i][chunk_size+1] = theirBorder[i-1];
 				}
 			}
 			
@@ -421,16 +432,16 @@ int main(int argc, char* argv[]) {
 				tag = EAST;
 				/* gather the data to send */
 				for(i = 1; i < myDomSize-1; ++i){
-					myBorder[i-1] = u1[chunk_size][i];
+					myBorder[i-1] = ARRVAL(u1, chunk_size, i); //u1[chunk_size][i];
 				}
-				MPI_Send (myBorder, chunk_size, MPI_DOUBLE, nbors[EAST], tag, comm_cart);
+				MPI_Send(myBorder, chunk_size, MPI_DOUBLE, nbors[EAST], tag, comm_cart);
 			}
-			if(nbors[WEST] > -1){
-				/* you have a WEST neighbor to rcv from */
+			if(nbors[WEST] > -1){/* you have a WEST neighbor to rcv from */
 				tag = EAST;
 				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[EAST], tag, comm_cart, &status);
-				for(i = 1;i < myDomSize-1; ++i){
-					u1[chunk_size+1][i] = theirBorder[i-1];/* put their border in my ghost row */
+				for(i = 1;i < myDomSize-1; ++i){/* put their border in my ghost row */
+					ARRVAL(u1, chunk_size+1, i) = theirBorder[i-1];
+					// u1[chunk_size+1][i] = theirBorder[i-1];/* put their border in my ghost row */
 				}
 
 
@@ -438,7 +449,7 @@ int main(int argc, char* argv[]) {
 				tag = WEST;
 				/* gather the data to send */
 				for(i = 1; i < myDomSize-1; ++i){
-					myBorder[i-1] = u1[1][i];
+					myBorder[i-1] = ARRVAL(u1, 1, i); //u1[1][i];
 				}
 				MPI_Send (myBorder, chunk_size, MPI_DOUBLE, nbors[WEST], tag, comm_cart);
 			}
@@ -446,16 +457,16 @@ int main(int argc, char* argv[]) {
 				tag = WEST;
 				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[WEST], tag, comm_cart, &status);
 				for(i = 1;i < myDomSize-1; ++i){
-					u1[0][i] = theirBorder[i-1];/* put their border in my ghost row */
+					ARRVAL(u1, 0, i) = theirBorder[i-1];/* put their border in my ghost row */
+					//u1[0][i] = theirBorder[i-1];/* put their border in my ghost row */
 				}
 			}
 #endif /* EXCHANGEDATA */
 
-		}/* end if(l > 9) */
+		}/* end iterate on time: if(l > 9) */
 
-		/* update the u-arrays so that u1/u(l) becomes u2/u(l+1) and 
+		/* rotate the u-arrays so that u1/u(l) becomes u2/u(l+1) and 
 		 * u0/u(l-1) becomes u1/u(l) */
-
 		utemp = u1;
 		u1 = u2;
 		u2 = u0;
@@ -464,7 +475,7 @@ int main(int argc, char* argv[]) {
 	
 	MPI_Barrier(comm_cart);
 
-	/* send final update to master */
+	/* TODO: send final update to master */
 
 	/* create a matrix to hold the final update */
 	if(myrank == 0){
@@ -480,16 +491,17 @@ int main(int argc, char* argv[]) {
 				memset(Uall[i], 0,domSize); 
 			}
 		}
-	}
-	/* store the subdomains in the master matrix */
-	/* loop through subdomains
+	} /* end if(create master matrix) */
+
+	/* TODO: store the subdomains in the master matrix 
+	 * use all-to-one reduce to communicate them to the master only
+	 * when writing the whole domain out to a file 
+	 * loop through subdomains
 	 * index by coords, then by x/y */
 
 
 #ifdef OUTPUT
-	/* print the last iteration to a file
-	 * use all-to-one reduce to communicate them to the master only
-	 * when writing the whole domain out to a file */
+	/* print the last iteration to a file */
 	if(myrank == 0){
 #ifdef DEBUG
 	printf("p%d Writing to output.txt....\n",myrank);
@@ -497,7 +509,7 @@ int main(int argc, char* argv[]) {
 		fp=fopen("output.txt", "w+");
 	    for(i = 1; i < (xmax-1); ++i){ 
 	        for(j = 1; j < (ymax-1); ++j){ 
-				fprintf(fp,"%4.2f\n",i,j,Uall[i][j]);
+				fprintf(fp,"%4.2f\n",Uall[i][j]);
 	        }
 	    }
 		fclose(fp);
@@ -585,8 +597,8 @@ double findMaxMag(double** u, int domSize){
 	double maxMag=0;
 	for(i=0; i < domSize; ++i){
 		for(j=0; j<domSize; ++j){
-			if(u[i][j] > maxMag)
-				maxMag = u[i][j];
+			if(ARRVAL(u, i, j) > maxMag)
+				maxMag = ARRVAL(u, i, j);
 		}	
 	}
 	return maxMag;
@@ -619,6 +631,7 @@ void freeArrays(double **array, int domSize){
 	free(array);
 }
 
+/* function prints a 2-dimensional, square array to console */
 void print2DArray(double **array, int length){
 	int i;
 	for(i = 0; i < length; ++i){
@@ -626,7 +639,8 @@ void print2DArray(double **array, int length){
 		printRow(array[i], length);		
 	}
 }
- 
+
+/* function prints a 1-D array to scraan as a row */
 void printRow(double * array, int length){
 	int j;
 	printf("[ ");
