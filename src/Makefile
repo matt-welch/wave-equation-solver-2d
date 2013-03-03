@@ -29,7 +29,7 @@ PARCONFIG	= -DPARALLEL -fopenmp
 EASY_FLAGS	= -lm
 
 debug: CONFIG=$(DEBUG_FLAGS)
-debug: wavesolv_serial wavesolv_mpi
+debug: wavesolv_mpi
 
 easy: CONFIG=$(EASY_FLAGS)
 easy: wavesolv_serial wavesolv_mpi
@@ -40,5 +40,5 @@ quiet: all
 test: wavesolv_serial
 	./wavesolv 100 1000000
 
-runmpi: wavesolv_mpi
-	mpiexec -n 4 ./wavesolv_mpi 30 100
+runmpi: debug 
+	mpiexec -n 4 ./wavesolv_mpi 

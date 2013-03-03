@@ -27,6 +27,8 @@
 #define ISSUEPULSE
 #define EXCHANGEDATA
 #define OUTPUT
+#define NOLEAKS
+#define CONTIGUOUS
 
 #define ARRVAL(u, i, j) u[(i)][(j)] 
 
@@ -71,12 +73,18 @@ int main(int argc, char* argv[]) {
 	double ** u1;
 	double ** u2;
 	double ** A;		/* temporary arrays for allocation and free */
+	double * Adata;
 	double ** B;
+	double * Bdata;
 	double ** C;
+	double * Cdata;
 	double ** utemp;
+	unsigned int numBytesAll;
+	unsigned int numBytesPerRow;
 
 	/* declare an array for the master to hold the entire domain */
 	double ** Uall;
+	double * Ualldata;
 
  
 	/* Pulse Height and cutoffs */
@@ -196,6 +204,7 @@ int main(int argc, char* argv[]) {
 	if(myrank==0) printf("CFL = %3.3f\n", CFL);
    
 	/* allocate memory for arrays */
+#ifdef NONCONTIGUOUS
 	/* u0 = u(l-1)*/
 	A = malloc(myDomSize * sizeof(double *) );
 	if(A == NULL){
@@ -248,6 +257,42 @@ int main(int argc, char* argv[]) {
 	if(theirBorder == NULL){
 		printf("Error: P%d: malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double));
 	}
+#else
+	/* allocate contiguous memory for array  */
+	numBytesAll    = myDomSize * myDomSize * sizeof(* Adata);
+	numBytesPerRow = myDomSize * sizeof(*A);
+
+	Adata = malloc(numBytesAll);
+	if(Adata == NULL) printf("Error: P%d malloc failed for Adata(%d B)", myrank,  numBytesAll );
+	A = malloc(numBytesPerRow);
+	if(A == NULL) printf("Error: P%d: malloc failed for A(%d B)\n", myrank, numBytesPerRow );
+	for(i=0; i < myDomSize; ++i){
+		A[i] = &Adata[i * myDomSize];
+		memset(A[i], 0,myDomSize); 
+	}
+	u0 = A;
+	
+	Bdata = malloc(numBytesAll);
+	if(Bdata == NULL) printf("Error: P%d malloc failed for Bdata(%d B)", myrank,  numBytesAll );
+	B = malloc(numBytesPerRow);
+	if(B == NULL) printf("Error: P%d: malloc failed for B(%d B)\n", myrank, numBytesPerRow );
+	for(i=0; i < myDomSize; ++i){
+		B[i] = &Bdata[i * myDomSize];
+		memset(B[i], 0,myDomSize); 
+	}
+	u1 = B;
+
+	Cdata = malloc(numBytesAll);
+	if(Cdata == NULL) printf("Error: P%d malloc failed for Cdata(%d B)", myrank,  numBytesAll );
+	C = malloc(numBytesPerRow);
+	if(C == NULL) printf("Error: P%d: malloc failed for C(%d B)\n", myrank, numBytesPerRow );
+	for(i=0; i < myDomSize; ++i){
+		C[i] = &Cdata[i * myDomSize];
+		memset(C[i], 0,myDomSize); 
+	}
+	u2 = C;
+#endif /* NONCONTIGOUS */
+	
 
 	/* use MPI_shift to determine the location of neighbor domain */
 	source = myrank;   /* calling process rank in 2D communicator */
@@ -313,6 +358,7 @@ int main(int argc, char* argv[]) {
 #endif /* VERBOSE */
 
 #ifdef ISSUEPULSE
+			
 			if( maxMag < pulseThresh){
 			/* if maximum magnitude has degraded to pulsethreshpct of initial pulse magnitude,
 			 * introduce another pulse at next edge pulse direction starts at w, then n, e, s, w...*/
@@ -334,21 +380,27 @@ int main(int argc, char* argv[]) {
 				pulseSide=0;
 				x = xmid;
 				y = 1;
+
 #endif /* MILE2 */
 				
 
 #ifdef DEBUG
-				printf("p%d: pulse @ (%d,%d), replacing u1=%4.2f\n", myrank, x, y, u1[x][y]);
+				printf("p%d: pulse#%d @ (%d,%d), replacing u1=%4.2f\n", myrank, pulseCount+1, x, y, u1[x][y]);
 #endif
-				/* insert a pulse at the edge of the domain */
+				if(x <= myXmax && x >= myXmin && y >= myYmin && y <= myYmax){
+					/* issue the pulse if the pulse coordinates are in your
+					 * domain */
+					/* insert a pulse at the edge of the domain */
 #ifdef WIDEPULSE
-				/* wide pulse */
-				u1[x][y] = u1[x+1][y] = u1[x][y+1] = u1[x-1][y] = pulse;
+					/* wide pulse */
+					ARRVAL(u1, x, y) = ARRVAL(u1, x+1, y) = 
+						ARRVAL(u1, x, y+1) = ARRVAL(u1, x-1, y) = pulse;
 #else
-				/* narrow pulse */
-				u1[x][y] = pulse;
+					/* narrow pulse */
+					ARRVAL(u1, x, y) = pulse;
 #endif /* WIDEPULSE */
-				pulseCount++;
+					pulseCount++;
+				}	
 			}else if( (l - lastPulseT) > 2){
 				/* only erase the pulse if it has been present for 2 iterations */
 				/* zero out last pulse */
@@ -388,6 +440,9 @@ int main(int argc, char* argv[]) {
 			/* MPI_Send (data, count, type, dest, tag, comm)
 			 * MPI_Recv (data, count, type, src, tag, comm, &status) */
 #endif /* UPDATEDOMAIN */
+
+
+
 
 #ifdef EXCHANGEDATA
 			/* communicate array updates to other nodes 
@@ -476,10 +531,10 @@ int main(int argc, char* argv[]) {
 	MPI_Barrier(comm_cart);
 
 	/* TODO: send final update to master */
-
 	/* create a matrix to hold the final update */
 	if(myrank == 0){
-			Uall = malloc(domSize * sizeof(double *) );
+#ifdef NONCONTIGUOUS
+		Uall = malloc(domSize * sizeof(double *) );
 		if(Uall == NULL){
 			printf("Error: P%d: malloc failed to allocate %lu bytes for array\n", myrank, domSize * sizeof(double *));
 		}
@@ -491,8 +546,21 @@ int main(int argc, char* argv[]) {
 				memset(Uall[i], 0,domSize); 
 			}
 		}
+#else
+		numBytesAll    = domSize * domSize * sizeof(*Ualldata );
+		numBytesPerRow = myDomSize * sizeof(*Uall);
+printf("P%d allocating master array, Uall\n", myrank);	
+		Ualldata = malloc(numBytesAll);
+		if(Ualldata == NULL) printf("Error: P%d malloc failed for Ualldata(%d B)", myrank,  numBytesAll );
+		Uall = malloc(numBytesPerRow);
+		if(Uall == NULL) printf("Error: P%d: malloc failed for Uall(%d B)\n", myrank, numBytesPerRow );
+		for(i=0; i < domSize; ++i){
+			Uall[i] = &Ualldata[i * domSize];
+			memset(Uall[i], 0, domSize); 
+		}
+#endif /* NONCONTIGUOUS */
 	} /* end if(create master matrix) */
-
+	
 	/* TODO: store the subdomains in the master matrix 
 	 * use all-to-one reduce to communicate them to the master only
 	 * when writing the whole domain out to a file 
@@ -516,8 +584,10 @@ int main(int argc, char* argv[]) {
 	}
 #endif
 
+#ifdef NOLEAKS
 	/* free memory for arrays */
 	/* free memory for u0 */
+#ifdef NONCONTIGUOUS
 	for(i=0; i < myDomSize; ++i){
 		free(A[i]);
 	}
@@ -542,17 +612,42 @@ int main(int argc, char* argv[]) {
 		}
 		free(Uall);
 	}
+#else
+#ifdef DEBUG
+	printf("P%d Freeing contiguous memory...\n", myrank);
+#endif
+	fflush(stdout);
+	free(A);
+	free(Adata);
 
+	free(B);
+	free(Bdata);
+
+	free(C);
+	free(Cdata);
+
+	if(myrank == 0){/* for some reason, freeing Uall gives segfault */
+		//printf("P%d, Uall() = %4.2f\n",myrank, ARRVAL(Uall,0,0));
+#ifdef DEBUG
+		printf("P%d: Uall address = %x\n", myrank, Uall);
+#endif
+		//free(Uall);
+		//free(Ualldata);
+	//	printf("P%d, Ualldata(addr) = %x\n",myrank, &Ualldata);
+	}
+#endif /* NONCONTIGUOUS */
+
+#endif /* NOLEAKS */
 	/* print total number of pulses */
 	printf("P(%d) pulseCount=%d\n", myrank, pulseCount);
 
 	
-	/* prevent anyone from exiting until they've synchronized at the barrier */
 #ifdef DEBUG
+	/* prevent anyone from exiting until they've synchronized at the barrier */
 	printf("P%d is Entering Barrier\n",myrank);
-#endif	
 	fflush(stdout);
 	MPI_Barrier(comm_cart);
+#endif	
 	
 	/* finalize MPI */
 	MPI_Finalize();
@@ -604,19 +699,18 @@ double findMaxMag(double** u, int domSize){
 	return maxMag;
 }
 
-void allocateArray(double **array, int domSize){
-	/* function takes a square input array and zeroes its contents 
-	 * assumes that the array has NOT YET been allocated 
-	 * TODO: consider using contiguous memory to allocate the array*/ 
+void allocateArray(double **array, int rows, int columns){
+	/* function allocates a square input array and zeroes its contents 
+	 * assumes that the array has NOT YET been allocated */ 
 	int i;
-	array = malloc(domSize * sizeof(double *) );
+	array = malloc(rows * columns * sizeof(double *) );
 	if(array == NULL){
-		printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(double));
+		printf("Error: malloc failed to allocate %lu bytes for array\n", rows * sizeof(double));
 	}
-	for(i=0; i < domSize; ++i){
-		array[i] = malloc(domSize * sizeof(double));
+	for(i=0; i < rows; ++i){
+		array[i] = malloc(rows * sizeof(double));
 		if(array == NULL){
-			printf("Error: malloc failed to allocate %lu bytes for array\n", domSize * sizeof(double));
+			printf("Error: malloc failed to allocate %lu bytes for array\n", rows * sizeof(double));
 		}
 	}
 }
