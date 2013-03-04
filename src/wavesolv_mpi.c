@@ -21,15 +21,17 @@
 #define EAST 1
 #define SOUTH 2
 #define WEST 3
+#define MASTER 4
 
 /* defines controlling which parts of the program are compiled */
 #define UPDATEDOMAIN
-#define ISSUEPULSE
+//#define ISSUEPULSE
 #define EXCHANGEDATA
-#define OUTPUT
-#define NOLEAKS
-#define CONTIGUOUS
+#define SENDTOMASTER
+//#define OUTPUT
+#define FREEMEMORY
 
+/* define that controlls how arrays are accessed */
 #define ARRVAL(u, i, j) u[(i)][(j)] 
 
 /* function prototypes */
@@ -81,11 +83,13 @@ int main(int argc, char* argv[]) {
 	double ** utemp;
 	unsigned int numBytesAll;
 	unsigned int numBytesPerRow;
+	unsigned int numElements;
 
 	/* declare an array for the master to hold the entire domain */
 	double ** Uall;
 	double * Ualldata;
-
+	double ** theirDomain; 
+	double * theirDomainData;
  
 	/* Pulse Height and cutoffs */
 	double pulse;				/* magnitude of pulses */
@@ -204,60 +208,6 @@ int main(int argc, char* argv[]) {
 	if(myrank==0) printf("CFL = %3.3f\n", CFL);
    
 	/* allocate memory for arrays */
-#ifdef NONCONTIGUOUS
-	/* u0 = u(l-1)*/
-	A = malloc(myDomSize * sizeof(double *) );
-	if(A == NULL){
-		printf("Error: P%d: malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double *));
-	}
-	for(i=0; i < myDomSize; ++i){
-		A[i] = malloc(myDomSize * sizeof(double));
-		if(A == NULL){
-			printf("Error: P%d malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double));
-		}else{
-			memset(A[i], 0,myDomSize); 
-		}
-	}
-	u0 = A;
-	/* u1 = u(l)*/
-	B = malloc(myDomSize * sizeof(double *) );
-	if(B == NULL){
-		printf("Error: P%d: malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double *));
-	}
-	for(i=0; i < myDomSize; ++i){
-		B[i] = malloc(myDomSize * sizeof(double));
-		if(B == NULL){
-			printf("Error: P%d malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double));
-		}else{
-			memset(B[i], 0,myDomSize); 
-		}
-	}
-	u1 = B;
-	/* u2 = u(l+1)*/
-	C = malloc(myDomSize * sizeof(double *) );
-	if(C == NULL){
-		printf("Error: P%d: malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double *));
-	}
-	for(i=0; i < myDomSize; ++i){
-		C[i] = malloc(myDomSize * sizeof(double));
-		if(C == NULL){
-			printf("Error: P%d malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double));
-		}else{
-			memset(C[i], 0,myDomSize); 
-		}
-	}
-	u2 = C;
-
-	/* allocate memory for border rows */
-	myBorder = malloc(chunk_size * sizeof(double));
-	if(myBorder == NULL){
-		printf("Error: P%d: malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double));
-	}
-	theirBorder = malloc(chunk_size * sizeof(double));
-	if(theirBorder == NULL){
-		printf("Error: P%d: malloc failed to allocate %lu bytes for array\n", myrank, myDomSize * sizeof(double));
-	}
-#else
 	/* allocate contiguous memory for array  */
 	numBytesAll    = myDomSize * myDomSize * sizeof(* Adata);
 	numBytesPerRow = myDomSize * sizeof(*A);
@@ -291,8 +241,13 @@ int main(int argc, char* argv[]) {
 		memset(C[i], 0,myDomSize); 
 	}
 	u2 = C;
-#endif /* NONCONTIGOUS */
-	
+
+	/* allocate memory for border rows */
+	numBytesPerRow = chunk_size * sizeof(double);
+	myBorder = malloc(numBytesPerRow);
+	if(myBorder == NULL) printf("Error: P%d: malloc failed for myBorder(%d B)\n", myrank, numBytesPerRow);
+	theirBorder = malloc(numBytesPerRow);
+	if(theirBorder == NULL) printf("Error: P%d: malloc failed for theirBorder(%d B)\n", myrank, numBytesPerRow);
 
 	/* use MPI_shift to determine the location of neighbor domain */
 	source = myrank;   /* calling process rank in 2D communicator */
@@ -436,13 +391,7 @@ int main(int argc, char* argv[]) {
 					}
 				}
 			}
-			/* myBorder = u1[x,y] : u1[chunksize,chunksize] */
-			/* MPI_Send (data, count, type, dest, tag, comm)
-			 * MPI_Recv (data, count, type, src, tag, comm, &status) */
 #endif /* UPDATEDOMAIN */
-
-
-
 
 #ifdef EXCHANGEDATA
 			/* communicate array updates to other nodes 
@@ -451,7 +400,7 @@ int main(int argc, char* argv[]) {
 			if(nbors[NORTH] > -1){/* you have a north-neighbor to send to*/
 				tag = NORTH;
 				/* gather the data to send */
-				for(i = 1; i < myDomSize-1; ++i){
+				for(i = 1; i < chunk_size; ++i){
 					myBorder[i-1] = ARRVAL(u1, i, chunk_size); //u1[i][chunk_size];
 				}
 				MPI_Send (myBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart);
@@ -459,7 +408,7 @@ int main(int argc, char* argv[]) {
 			if(nbors[SOUTH] > -1){/* you have a south neighbor to rcv from */
 				tag = NORTH;
 				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart, &status);
-				for(i = 1;i < myDomSize-1; ++i){/* put their border in my ghost row */
+				for(i = 1; i < chunk_size; ++i){/* put their border in my ghost row */
 					ARRVAL(u1, i, 0) = theirBorder[i-1];
 					//u1[i][0] = theirBorder[i-1];
 				}
@@ -468,7 +417,7 @@ int main(int argc, char* argv[]) {
 				/* you have a south neighbor to send data to */
 				tag = SOUTH;
 				/* gather the data to send */
-				for(i = 1; i < myDomSize-1; ++i){
+				for(i = 1; i < chunk_size; ++i){
 					myBorder[i-1] = ARRVAL(u1, i, 0); //u1[i][0];
 				}
 				MPI_Send (myBorder, chunk_size, MPI_DOUBLE, nbors[SOUTH], tag, comm_cart);
@@ -476,7 +425,7 @@ int main(int argc, char* argv[]) {
 			if(nbors[NORTH] > -1){/* you have a north-neighbor to receive from */
 				tag = SOUTH;
 				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[SOUTH], tag, comm_cart, &status);
-				for(i = 1;i < myDomSize-1; ++i){/* put their border in my ghost row */
+				for(i = 1;i < chunk_size; ++i){/* put their border in my ghost row */
 					ARRVAL(u1, i, chunk_size+1) = theirBorder[i-1];
 					//u1[i][chunk_size+1] = theirBorder[i-1];
 				}
@@ -486,7 +435,7 @@ int main(int argc, char* argv[]) {
 			if(nbors[EAST] > -1){/* you have a EAST-neighbor to send to*/
 				tag = EAST;
 				/* gather the data to send */
-				for(i = 1; i < myDomSize-1; ++i){
+				for(i = 1; i < chunk_size; ++i){
 					myBorder[i-1] = ARRVAL(u1, chunk_size, i); //u1[chunk_size][i];
 				}
 				MPI_Send(myBorder, chunk_size, MPI_DOUBLE, nbors[EAST], tag, comm_cart);
@@ -494,7 +443,7 @@ int main(int argc, char* argv[]) {
 			if(nbors[WEST] > -1){/* you have a WEST neighbor to rcv from */
 				tag = EAST;
 				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[EAST], tag, comm_cart, &status);
-				for(i = 1;i < myDomSize-1; ++i){/* put their border in my ghost row */
+				for(i = 1;i < chunk_size; ++i){/* put their border in my ghost row */
 					ARRVAL(u1, chunk_size+1, i) = theirBorder[i-1];
 					// u1[chunk_size+1][i] = theirBorder[i-1];/* put their border in my ghost row */
 				}
@@ -503,7 +452,7 @@ int main(int argc, char* argv[]) {
 				/* you have a WEST neighbor to send data to */
 				tag = WEST;
 				/* gather the data to send */
-				for(i = 1; i < myDomSize-1; ++i){
+				for(i = 1; i < chunk_size; ++i){
 					myBorder[i-1] = ARRVAL(u1, 1, i); //u1[1][i];
 				}
 				MPI_Send (myBorder, chunk_size, MPI_DOUBLE, nbors[WEST], tag, comm_cart);
@@ -511,7 +460,7 @@ int main(int argc, char* argv[]) {
 			if(nbors[EAST] > -1){/* you have a EAST-neighbor to receive from */
 				tag = WEST;
 				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[WEST], tag, comm_cart, &status);
-				for(i = 1;i < myDomSize-1; ++i){
+				for(i = 1;i < chunk_size; ++i){
 					ARRVAL(u1, 0, i) = theirBorder[i-1];/* put their border in my ghost row */
 					//u1[0][i] = theirBorder[i-1];/* put their border in my ghost row */
 				}
@@ -530,26 +479,16 @@ int main(int argc, char* argv[]) {
 	
 	MPI_Barrier(comm_cart);
 
-	/* TODO: send final update to master */
-	/* create a matrix to hold the final update */
+#ifdef SENDTOMASTER
+	/* Communicate domain contents to master */
+	MPI_Barrier(comm_cart);
 	if(myrank == 0){
-#ifdef NONCONTIGUOUS
-		Uall = malloc(domSize * sizeof(double *) );
-		if(Uall == NULL){
-			printf("Error: P%d: malloc failed to allocate %lu bytes for array\n", myrank, domSize * sizeof(double *));
-		}
-		for(i=0; i < domSize; ++i){
-			Uall[i] = malloc(domSize * sizeof(double));
-			if(Uall == NULL){
-				printf("Error: P%d malloc failed to allocate %lu bytes for array\n", myrank, domSize * sizeof(double));
-			}else{
-				memset(Uall[i], 0,domSize); 
-			}
-		}
-#else
+	/* create a matrix to hold the final update */
+#ifdef DEBUG
+		printf("P%d allocating master array, Uall\n", myrank);	
+#endif	
 		numBytesAll    = domSize * domSize * sizeof(*Ualldata );
-		numBytesPerRow = myDomSize * sizeof(*Uall);
-printf("P%d allocating master array, Uall\n", myrank);	
+		numBytesPerRow = domSize * sizeof(*Uall);
 		Ualldata = malloc(numBytesAll);
 		if(Ualldata == NULL) printf("Error: P%d malloc failed for Ualldata(%d B)", myrank,  numBytesAll );
 		Uall = malloc(numBytesPerRow);
@@ -558,15 +497,67 @@ printf("P%d allocating master array, Uall\n", myrank);
 			Uall[i] = &Ualldata[i * domSize];
 			memset(Uall[i], 0, domSize); 
 		}
-#endif /* NONCONTIGUOUS */
-	} /* end if(create master matrix) */
-	
-	/* TODO: store the subdomains in the master matrix 
-	 * use all-to-one reduce to communicate them to the master only
-	 * when writing the whole domain out to a file 
-	 * loop through subdomains
-	 * index by coords, then by x/y */
 
+		/* allocate a small array to temporarily hold everyone else's final results */
+		numBytesAll = myDomSize * myDomSize * sizeof(* theirDomainData);
+		numBytesPerRow = myDomSize * sizeof(*theirDomain);
+		theirDomainData = malloc(numBytesAll);
+		if(theirDomainData == NULL) printf("Error: P%d malloc failed for theirDomainData(%d B)", myrank,  numBytesAll ); 
+		theirDomain = malloc(numBytesPerRow);
+		if(theirDomain == NULL) printf("Error: P%d malloc failed for theirDomain(%d B)", myrank,  numBytesPerRow );
+		for(i=0; i < myDomSize; i++){
+			theirDomain[i] = &theirDomainData[i*myDomSize];
+		}	
+#ifdef DEBUG
+		printf("P%d finished allocating memory\n",myrank);
+		fflush(stdout);
+#endif
+	} /* end if(create master matrix) */
+	/* send final update to master */
+	numElements = myDomSize * myDomSize; 
+	tag = MASTER;
+	if(myrank > 0){
+#ifdef DEBUG
+		printf("P%d, sending %d doubles to master...\n",myrank, numElements);
+		fflush(stdout);
+#endif
+		MPI_Send (u1, numElements, MPI_DOUBLE, 0, tag, comm_cart);
+	}else if(myrank == 0){
+	/* TODO: store the subdomains in the master matrix 
+	 * TODO: use all-to-one reduce to communicate them to the master only  */
+		for(source = 1; source < numprocs; ++source){
+#ifdef DEBUG
+	printf("P%d, receiving data from P%d\n",myrank, source);
+	fflush(stdout);
+#endif
+				ierr = MPI_Recv (theirDomain, numElements, MPI_DOUBLE, source, tag, comm_cart, &status);
+#ifdef DEBUG
+	printf("P%d, received data from P%d\n",myrank, source);
+	fflush(stdout);
+	sleep(10);
+#endif
+			/* int MPI_Cart_coord(MPI_Comm comm_cart, int myrank, int maxdims, int *coords) */
+			MPI_Cart_coords(comm_cart, source, ndims, &coords);
+	
+			/* calculate the x & y coordinates of the node's subdomain */
+			myXmin =  chunk_size *  coords[0];
+			myYmin =  chunk_size *  coords[1];
+
+			for(i = 1; i < chunk_size; i++){
+				for (j = 1; j < chunk_size; j++) {
+					x = myXmin + i -1;
+					y = myYmin + j -1;
+					ARRVAL(Uall, x, y) = ARRVAL(theirDomain, i, j);	
+				}
+			}
+			#ifdef DEBUG
+				printf("P%d copied data from P%d\n", myrank, source);
+				fflush(stdout);
+			#endif
+		}
+	}
+
+#endif /* SENDTOMASTER */
 
 #ifdef OUTPUT
 	/* print the last iteration to a file */
@@ -584,35 +575,9 @@ printf("P%d allocating master array, Uall\n", myrank);
 	}
 #endif
 
-#ifdef NOLEAKS
+#ifdef FREEMEMORY
 	/* free memory for arrays */
 	/* free memory for u0 */
-#ifdef NONCONTIGUOUS
-	for(i=0; i < myDomSize; ++i){
-		free(A[i]);
-	}
-	free(A);
-
-	/* free memory for u1 */
-	for(i=0; i < myDomSize; ++i){
-		free(B[i]);
-	}
-	free(B);
-	
-	/* free memory for u2 */
-	for(i=0; i < myDomSize; ++i){
-		free(C[i]);
-	}
-	free(C);
-
-	/* free memory for the master matrix */
-	if(myrank == 0){
-		for(i=0; i < domSize; ++i){
-			free(Uall[i]);
-		}
-		free(Uall);
-	}
-#else
 #ifdef DEBUG
 	printf("P%d Freeing contiguous memory...\n", myrank);
 #endif
@@ -635,12 +600,13 @@ printf("P%d allocating master array, Uall\n", myrank);
 		//free(Ualldata);
 	//	printf("P%d, Ualldata(addr) = %x\n",myrank, &Ualldata);
 	}
-#endif /* NONCONTIGUOUS */
 
-#endif /* NOLEAKS */
+#endif /* FREEMEMORY */
+
+#ifdef ISSUEPULSE
 	/* print total number of pulses */
 	printf("P(%d) pulseCount=%d\n", myrank, pulseCount);
-
+#endif /* ISSUEPULSE */
 	
 #ifdef DEBUG
 	/* prevent anyone from exiting until they've synchronized at the barrier */
