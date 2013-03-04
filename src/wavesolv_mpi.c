@@ -28,7 +28,7 @@
 //#define ISSUEPULSE
 #define EXCHANGEDATA
 #define SENDTOMASTER
-//#define OUTPUT
+#define OUTPUT
 #define FREEMEMORY
 
 /* define that controlls how arrays are accessed */
@@ -49,6 +49,7 @@ int main(int argc, char* argv[]) {
 	
 	MPI_Status status;
 	MPI_Comm comm_cart;
+	MPI_Request request;
 	int ndims = 2;
 	int dims[2], period[2], reorder, coords[2], nbors[4];
 	int maxXcoord, maxYcoord;
@@ -90,6 +91,7 @@ int main(int argc, char* argv[]) {
 	double * Ualldata;
 	double ** theirDomain; 
 	double * theirDomainData;
+	double extraDomain[482][482];
  
 	/* Pulse Height and cutoffs */
 	double pulse;				/* magnitude of pulses */
@@ -221,6 +223,10 @@ int main(int argc, char* argv[]) {
 		memset(A[i], 0,myDomSize); 
 	}
 	u0 = A;
+#ifdef DEBUG
+		printf("P%d successfully allocated %d bytes for u0/A\n",myrank, numBytesAll);
+		fflush(stdout);
+#endif
 	
 	Bdata = malloc(numBytesAll);
 	if(Bdata == NULL) printf("Error: P%d malloc failed for Bdata(%d B)", myrank,  numBytesAll );
@@ -369,7 +375,9 @@ int main(int argc, char* argv[]) {
 #ifdef UPDATEDOMAIN
 			if(numprocs == 1){
 				/* update u - loop through x and y to calculate u at each point in the domain */
+#ifdef DEBUG
 				printf("Numprocs=1, updating domain for one\n");
+#endif
 				for(i = 1; i < (xmax-1); ++i){ 
         		    for(j = 1; j < (ymax-1); ++j){ 
 						ARRVAL(u2, i, j) = getNextValue(ARRVAL(u1, i, j), 
@@ -403,16 +411,18 @@ int main(int argc, char* argv[]) {
 				for(i = 1; i < chunk_size; ++i){
 					myBorder[i-1] = ARRVAL(u1, i, chunk_size); //u1[i][chunk_size];
 				}
-				MPI_Send (myBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart);
+				MPI_Send(&myBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart);
 			}
 			if(nbors[SOUTH] > -1){/* you have a south neighbor to rcv from */
 				tag = NORTH;
-				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart, &status);
+				ierr = MPI_Recv(&theirBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart, &status);
 				for(i = 1; i < chunk_size; ++i){/* put their border in my ghost row */
 					ARRVAL(u1, i, 0) = theirBorder[i-1];
 					//u1[i][0] = theirBorder[i-1];
 				}
-
+#ifdef VERBOSE
+	printf("P%d: South border successfully exchanged between S%d & N%d\n", myrank, nbors[SOUTH], myrank);
+#endif			
 
 				/* you have a south neighbor to send data to */
 				tag = SOUTH;
@@ -420,17 +430,20 @@ int main(int argc, char* argv[]) {
 				for(i = 1; i < chunk_size; ++i){
 					myBorder[i-1] = ARRVAL(u1, i, 0); //u1[i][0];
 				}
-				MPI_Send (myBorder, chunk_size, MPI_DOUBLE, nbors[SOUTH], tag, comm_cart);
+				MPI_Send(&myBorder, chunk_size, MPI_DOUBLE, nbors[SOUTH], tag, comm_cart);
 			}
 			if(nbors[NORTH] > -1){/* you have a north-neighbor to receive from */
 				tag = SOUTH;
-				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[SOUTH], tag, comm_cart, &status);
+				ierr = MPI_Recv (&theirBorder, chunk_size, MPI_DOUBLE, nbors[SOUTH], tag, comm_cart, &status);
 				for(i = 1;i < chunk_size; ++i){/* put their border in my ghost row */
 					ARRVAL(u1, i, chunk_size+1) = theirBorder[i-1];
 					//u1[i][chunk_size+1] = theirBorder[i-1];
 				}
+#ifdef VERBOSE
+	printf("P%d: North border successfully exchanged between N%d & S%d\n", myrank, nbors[NORTH], myrank);
+#endif		
 			}
-			
+	
 			/* EAST-WEST border exchange second */
 			if(nbors[EAST] > -1){/* you have a EAST-neighbor to send to*/
 				tag = EAST;
@@ -438,16 +451,15 @@ int main(int argc, char* argv[]) {
 				for(i = 1; i < chunk_size; ++i){
 					myBorder[i-1] = ARRVAL(u1, chunk_size, i); //u1[chunk_size][i];
 				}
-				MPI_Send(myBorder, chunk_size, MPI_DOUBLE, nbors[EAST], tag, comm_cart);
+				MPI_Isend(&myBorder, chunk_size, MPI_DOUBLE, nbors[EAST], tag, comm_cart, &request);
 			}
 			if(nbors[WEST] > -1){/* you have a WEST neighbor to rcv from */
 				tag = EAST;
-				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[EAST], tag, comm_cart, &status);
+				ierr = MPI_Recv(&theirBorder, chunk_size, MPI_DOUBLE, nbors[EAST], tag, comm_cart, &status);
 				for(i = 1;i < chunk_size; ++i){/* put their border in my ghost row */
 					ARRVAL(u1, chunk_size+1, i) = theirBorder[i-1];
 					// u1[chunk_size+1][i] = theirBorder[i-1];/* put their border in my ghost row */
 				}
-
 
 				/* you have a WEST neighbor to send data to */
 				tag = WEST;
@@ -455,11 +467,11 @@ int main(int argc, char* argv[]) {
 				for(i = 1; i < chunk_size; ++i){
 					myBorder[i-1] = ARRVAL(u1, 1, i); //u1[1][i];
 				}
-				MPI_Send (myBorder, chunk_size, MPI_DOUBLE, nbors[WEST], tag, comm_cart);
+				MPI_Isend(&myBorder, chunk_size, MPI_DOUBLE, nbors[WEST], tag, comm_cart, &request);
 			}
 			if(nbors[EAST] > -1){/* you have a EAST-neighbor to receive from */
 				tag = WEST;
-				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[WEST], tag, comm_cart, &status);
+				ierr = MPI_Recv(&theirBorder, chunk_size, MPI_DOUBLE, nbors[WEST], tag, comm_cart, &status);
 				for(i = 1;i < chunk_size; ++i){
 					ARRVAL(u1, 0, i) = theirBorder[i-1];/* put their border in my ghost row */
 					//u1[0][i] = theirBorder[i-1];/* put their border in my ghost row */
@@ -481,7 +493,6 @@ int main(int argc, char* argv[]) {
 
 #ifdef SENDTOMASTER
 	/* Communicate domain contents to master */
-	MPI_Barrier(comm_cart);
 	if(myrank == 0){
 	/* create a matrix to hold the final update */
 #ifdef DEBUG
@@ -507,56 +518,74 @@ int main(int argc, char* argv[]) {
 		if(theirDomain == NULL) printf("Error: P%d malloc failed for theirDomain(%d B)", myrank,  numBytesPerRow );
 		for(i=0; i < myDomSize; i++){
 			theirDomain[i] = &theirDomainData[i*myDomSize];
+			memset(theirDomain[i], 0, myDomSize);
 		}	
 #ifdef DEBUG
-		printf("P%d finished allocating memory\n",myrank);
+		printf("P%d successfully allocated %d bytes for theirDomain\n",myrank, numBytesAll);
 		fflush(stdout);
 #endif
 	} /* end if(create master matrix) */
 	/* send final update to master */
-	numElements = myDomSize * myDomSize; 
+
+	MPI_Barrier(comm_cart);
+	numElements = 100; //myDomSize * myDomSize; 
 	tag = MASTER;
-	if(myrank > 0){
+
+	if(myrank == 0){/* root node receives */
+		/* TODO: store the subdomains in the master matrix 
+		* TODO: use all-to-one reduce to communicate them to the master only  */
+		printf("MyRank = %d\n", myrank);
+		for(source = 1; source < 2; source++){
 #ifdef DEBUG
-		printf("P%d, sending %d doubles to master...\n",myrank, numElements);
-		fflush(stdout);
+			printf("P%d, receiving %d doubles from P%d\n", myrank, numElements, source);
+			fflush(stdout);
 #endif
-		MPI_Send (u1, numElements, MPI_DOUBLE, 0, tag, comm_cart);
-	}else if(myrank == 0){
-	/* TODO: store the subdomains in the master matrix 
-	 * TODO: use all-to-one reduce to communicate them to the master only  */
-		for(source = 1; source < numprocs; ++source){
+
+			ierr = MPI_Recv(theirDomainData, numElements, MPI_DOUBLE, source, tag, comm_cart, &status);
 #ifdef DEBUG
-	printf("P%d, receiving data from P%d\n",myrank, source);
-	fflush(stdout);
+			printf("P%d: received data from P%d, source=%d, tag=%d\n", myrank, source, status.MPI_SOURCE, status.MPI_TAG);
+			fflush(stdout);
 #endif
-				ierr = MPI_Recv (theirDomain, numElements, MPI_DOUBLE, source, tag, comm_cart, &status);
-#ifdef DEBUG
-	printf("P%d, received data from P%d\n",myrank, source);
-	fflush(stdout);
-	sleep(10);
-#endif
-			/* int MPI_Cart_coord(MPI_Comm comm_cart, int myrank, int maxdims, int *coords) */
+			/* get coordinates of next receive */
 			MPI_Cart_coords(comm_cart, source, ndims, &coords);
 	
 			/* calculate the x & y coordinates of the node's subdomain */
-			myXmin =  chunk_size *  coords[0];
-			myYmin =  chunk_size *  coords[1];
-
-			for(i = 1; i < chunk_size; i++){
-				for (j = 1; j < chunk_size; j++) {
+			myXmin =  chunk_size * coords[0];
+			myYmin =  chunk_size * coords[1];
+			/* copy data from theirDomain to complete domain */
+			for(i = 1; i < chunk_size-1; i++){
+				for (j = 1; j < chunk_size-1; j++) {
 					x = myXmin + i -1;
 					y = myYmin + j -1;
+#ifdef VERBOSE
+					printf("x,y=(%d,%d), i,j=(%d, %d)\n",x,y,i,j);
+					printf("theirDomain(%d,%d)=%4.2f",i,j,ARRVAL(theirDomain,i,j));
+					printf("Uall(%d,%d)=%4.2f",x,y,ARRVAL(Uall,x,y));
+					fflush(stdout);
+#endif
 					ARRVAL(Uall, x, y) = ARRVAL(theirDomain, i, j);	
 				}
-			}
-			#ifdef DEBUG
+			}/* end for(i=1:chunk_size) */
+#ifdef DEBUG
 				printf("P%d copied data from P%d\n", myrank, source);
 				fflush(stdout);
-			#endif
-		}
+#endif
+		}/* end for(source = 1:numprocs) */
+	}else {
+#ifdef DEBUG
+		printf("P%d: sending %d doubles to master...\n",myrank, numElements);
+		fflush(stdout);
+#endif
+		MPI_Send(&u1, numElements, MPI_DOUBLE, 0, tag, comm_cart); /* non-blocking send */
+#ifdef DEBUG
+		printf("P%d: SENT %d doubles to master...\n",myrank, numElements);
+		fflush(stdout);
+#endif
+
 	}
 
+	/* unnecessary barrier for debugging */
+	MPI_Barrier(comm_cart);
 #endif /* SENDTOMASTER */
 
 #ifdef OUTPUT
@@ -594,7 +623,7 @@ int main(int argc, char* argv[]) {
 	if(myrank == 0){/* for some reason, freeing Uall gives segfault */
 		//printf("P%d, Uall() = %4.2f\n",myrank, ARRVAL(Uall,0,0));
 #ifdef DEBUG
-		printf("P%d: Uall address = %x\n", myrank, Uall);
+		printf("P%d: Uall address = %x\n", myrank, &Uall);
 #endif
 		//free(Uall);
 		//free(Ualldata);
