@@ -1,8 +1,9 @@
 close all
 clear all
 load output.txt
-X=1:480;
-Y=1:480;
+domSize = sqrt(length(output));
+X=1:domSize;
+Y=1:domSize;
 Z = output(:,end);
 %avgZ = mean(Z);
 %for(i=1:length(Z))
@@ -10,11 +11,16 @@ Z = output(:,end);
 %		Z(i)=avgZ; 
 %	endif
 %endfor
-Z=reshape(Z,480,480);
+Z=reshape(Z,domSize,domSize);
 figure;
 meshz(X,Y,Z);
-view(100,15);
+rotation = 330;
+elevation = 15;
+view(rotation,elevation);
+title(['Rot=',num2str(rotation),', Elev=',num2str(elevation)]);
 interval = 50;
 %axis([241-interval 241+interval 0 2*interval 0 max(max(Z(:,:)))]);
+disp(['Min = ',num2str(min(output))])
+disp(['Max = ',num2str(max(output))])
 
 
