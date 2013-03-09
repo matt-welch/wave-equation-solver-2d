@@ -4,23 +4,30 @@ load output.txt
 domSize = sqrt(length(output));
 X=1:domSize;
 Y=1:domSize;
-Z = output(:,end);
+Z_orig = output(:,end);
+Z=Z_orig;
 %avgZ = mean(Z);
-%for(i=1:length(Z))
-%	if(Z(i) >avgZ)
-%		Z(i)=avgZ; 
-%	endif
-%endfor
+for(i=1:length(Z))
+	if(Z(i) >1000000)
+		Z(i)=4; 
+    end
+end
 Z=reshape(Z,domSize,domSize);
 figure;
 meshz(X,Y,Z);
-rotation = 330;
-elevation = 15;
-view(rotation,elevation);
-title(['Rot=',num2str(rotation),', Elev=',num2str(elevation)]);
+azimuth = -7;
+elevation = 43;
+view(azimuth,elevation);
+%title(['Rot=',num2str(rotation),', Elev=',num2str(elevation)]);
 interval = 50;
-%axis([241-interval 241+interval 0 2*interval 0 max(max(Z(:,:)))]);
-disp(['Min = ',num2str(min(output))])
-disp(['Max = ',num2str(max(output))])
+axis([0 domSize+4 0 domSize+4 0 max(Z(:))]);
+disp(['min = ',num2str(min(output))])
+disp(['max = ',num2str(max(output))])
+disp(['median = ',num2str(median(output))])
+disp(['std = ',num2str(std(output))])
+disp(['mean = ',num2str(mean(output))])
 
+Z_orig=reshape(Z,domSize, domSize);
+
+run('show_high_vals')
 
