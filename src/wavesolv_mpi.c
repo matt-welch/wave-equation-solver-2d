@@ -199,7 +199,7 @@ int main(int argc, char* argv[]) {
 #endif
 
 	/* step sizes for t, x, & y*/
-	dt = 0.40; /* 42 */
+	dt = 0.45; /* 42 */
 	dx = dy = 0.90;
 	CFL = checkCFL(dx, dy, dt);
 	r = dt/dx;
@@ -311,32 +311,24 @@ int main(int argc, char* argv[]) {
 		*/
 		/* TODO START HERE  findMaxMag may not be working */
 		myMaxMag = findMaxMag(u1,chunk_size);
-#ifdef DEBUG
+#ifdef VERBOSE
 	printf("P%d(t%d): max=%2.2f\n",myrank,l,myMaxMag);
-	if(!myrank){
-		myMaxMag = findMaxMag(u0,chunk_size);
-		printf("P%d(t%d): U0max=%2.2f\n",myrank,l,myMaxMag);
-		myMaxMag = findMaxMag(u1,chunk_size);
-		printf("P%d(t%d): U2max=%2.2f\n",myrank,l,myMaxMag);
-	}
+		if(!myrank){
+			myMaxMag = findMaxMag(u0,chunk_size);
+			printf("P%d(t%d): U0max=%2.2f\n",myrank,l,myMaxMag);
+			myMaxMag = findMaxMag(u1,chunk_size);
+			printf("P%d(t%d): U2max=%2.2f\n",myrank,l,myMaxMag);
+		}
 #endif
-	/* int 
-	 * MPI_Gather(void *sendbuf, int sendcount, MPI_Datatype sendtype,
-	 *			void *recvbuf, int recvcount, MPI_Datatype recvtype,
-	 *			 int root, *  MPI_Comm comm) */
 		MPI_Gather(&myMaxMag, 1, MPI_DOUBLE, 
 				gMaxEach, numprocs, MPI_DOUBLE, 
 				0, comm_cart );	
-#ifdef DEBUG
-	if(!myrank) printf("Gather: gMAX=[%2.2f %2.2f %2.2f %2.2f]\n",
-								gMaxEach[0],gMaxEach[1],gMaxEach[2],gMaxEach[3]); 
-#endif
 	
-		gMax = rowMax(gMaxEach, 4);	
-#ifdef DEBUG
-	if(!myrank) printf("gMax=%4.2f\n", gMax);
+		gMax = rowMax(gMaxEach, numprocs);	
+#ifdef VERBOSE
+		if(!myrank) printf("gMax=%4.2f\n", gMax);
 #endif
-		if( l > 2 && gMax < pulseThresh ){/* issue pulse if global max mag 
+		if( l > 1 && gMax < pulseThresh ){/* issue pulse if global max mag 
 		*	has degraded below threshhold of initial pulse magnitude */
 		
 			/* figure out where the pulse is going to be
