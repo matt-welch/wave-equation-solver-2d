@@ -16,6 +16,7 @@ wavesolv: wavesolv.c
 
 wavesolv_mpi: wavesolv_mpi.c
 	mpicc wavesolv_mpi.c -o wavesolv_mpi $(CONFIG) $(PARCONFIG)
+	ctags --c-kinds=+defglmpstux *.c
 
 wavesolv_serial: wavesolv
 
