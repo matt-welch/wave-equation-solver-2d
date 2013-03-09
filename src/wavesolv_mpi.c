@@ -29,7 +29,7 @@
 #define UPDATEDOMAIN
 #define SENDTOMASTER /* seg faulting on MPI_Recv */
 #define OUTPUT
-//#define FREEMEMORY
+#define FREEMEMORY
 //#define ZEROLASTPULSE /* doesn't work yet */
 
 /* define that controls how arrays are accessed */
@@ -100,14 +100,17 @@ int main(int argc, char* argv[]) {
 	double pulse;				/* magnitude of pulses */
 	double pulseThresh;		/* magnitude at which new pulse happens */
 	double pulseThreshPct;	/* percentage of last pulse when next pulse happens*/
-	double maxMag;				/* maximum magnitude of the wave @ current time step */
-	double myMaxMag;		/* maxMag for each node */
+	double  gMax;	/* maximum magnitude of the wave @ current time step for whole domain*/
+	double * gMaxEach;	/* array of maxima for each node */
+	double myMaxMag;		/* gMax for each node */
 	int pulseCount = 0;	/* the number of pulses emitted, track to compare to mesh plot */
 	char * pulseTimes;	/* the time steps at which pulses happened (for debugging) */
 	unsigned short pulseSide = 0;		/* the side where the pulse comes from 0-3*/
 	unsigned short lastPulseX = 0;	/* coordinates of the last pulse */
 	unsigned short lastPulseY = 0;
 	unsigned short lastPulseT = 0;	/* time value of the last pulse */
+	int pulseX, pulseY;
+
 
     /* c is the wave velocity - unused  
      * r is a coefficient in the wave equation where r = dt/dx' */
@@ -160,21 +163,11 @@ int main(int argc, char* argv[]) {
 	/* reset the rank to the cartesian communicator */
 	MPI_Cart_rank(comm_cart, coords, &myrank);
 
-#ifdef DEBUG
-	/* identify individual processors in the communicator */
-	if(myrank == 0){
-		printf("I am the master (proc %d of %d)!\n", myrank, numprocs);
-	}else if(myrank > 0){
-		printf("My rank is %d of %d.\n",myrank, numprocs);
-	}
-	fflush(stdout);
-#endif
-
 	/* duration of simulation(steps), width, and height of domain */
 	if(argc > 1)
 		tmax = atoi(argv[1]);
 	else
-		tmax = 1;	
+		tmax = 5;	
 	/* TODO: make domSize an input parameter */
 	domSize = xmax = ymax = 256 + 2; /* two greater than 480 for ghost rows*/ 
 	xmid = ymid = (domSize / 2) - 1; /* midpoint of the domain */
@@ -185,7 +178,7 @@ int main(int argc, char* argv[]) {
 	if(argc > 2)
 		pulse = atoi(argv[2]);
 	else 
-		pulse = 25;
+		pulse = 5.0;
 	pulseThreshPct = 0.2; /* 20% of intitial pulse height */ 
 	pulseThresh = pulse * pulseThreshPct;
 
@@ -206,7 +199,7 @@ int main(int argc, char* argv[]) {
 #endif
 
 	/* step sizes for t, x, & y*/
-	dt = 42; /* 42 */
+	dt = 40; /* 42 */
 	dx = dy = 90;
 	CFL = checkCFL(dx, dy, dt);
 	r = dt/dx;
@@ -249,7 +242,7 @@ int main(int argc, char* argv[]) {
 
 	/* zero memory */	
 	for(i=0; i<numElements; i++){
-		Adata[i] = Bdata[i] = Cdata[i] = (double)myrank;
+		Adata[i] = Bdata[i] = Cdata[i] = 0.0;
 	}
 
 	/* allocate memory for border rows */
@@ -258,6 +251,9 @@ int main(int argc, char* argv[]) {
 	if(myBorder == NULL) printf("Error: P%d: malloc failed for myBorder(%d B)\n", myrank, numBytesPerRow);
 	theirBorder = malloc(numBytesPerRow);
 	if(theirBorder == NULL) printf("Error: P%d: malloc failed for theirBorder(%d B)\n", myrank, numBytesPerRow);
+
+	/* allocate memory for gMaxEach */
+	gMaxEach = malloc( numprocs * sizeof(double));
 
 	/* use MPI_shift to determine the location of neighbor domain */
 	source = myrank;   /* calling process rank in 2D communicator */
@@ -311,44 +307,64 @@ int main(int argc, char* argv[]) {
 		 * determine maximum of each sub-domain and AllReduce to everyone
 		 * use findMaxMag on each subdomain
 		*/
-
+		/* TODO START HERE  findMaxMag may not be working */
 		myMaxMag = findMaxMag(u1,chunk_size);
-		//MPI_Allreduce( &maxMag, &myMaxMag, 1, MPI_DOUBLE, MPI_MAX, comm_cart );	
-		maxMag = myMaxMag;
-
-#ifdef ISSUEPULSE
-		if( maxMag < pulseThresh ){
-		/* if maximum magnitude has degraded to pulseThreshPct of initial pulse magnitude */
-			/* figure out where the pulse is going to be */
-			/* introduce a pulse in the same position every time */
+#ifdef DEBUG
+	printf("P%d(t%d): max=%2.2f\n",myrank,l,myMaxMag);
+#endif
+	/* int 
+	 * MPI_Gather(void *sendbuf, int sendcount, MPI_Datatype sendtype,
+	 *			void *recvbuf, int recvcount, MPI_Datatype recvtype,
+	 *			 int root, *  MPI_Comm comm) */
+		MPI_Gather(&myMaxMag, 1, MPI_DOUBLE, 
+				gMaxEach, numprocs, MPI_DOUBLE, 
+				0, comm_cart );	
+#ifdef DEBUG
+	if(!myrank) printf("Gather: gMAX=[%2.2f %2.2f %2.2f %2.2f]\n",
+								gMaxEach[0],gMaxEach[1],gMaxEach[2],gMaxEach[3]); 
+#endif
+	
+		gMax = rowMax(gMaxEach, 4);	
+		if( gMax < pulseThresh ){/* issue pulse if global max mag 
+		*	has degraded below threshhold of initial pulse magnitude */
+		
+			/* figure out where the pulse is going to be
+			 *  TODO rotate */
 			pulseSide=0;
-			pulseX = 128;  
-			pulseY = 128;
-
-			if(x <= myXmax && x >= myXmin && y >= myYmin && y <= myYmax){
-				/* issue the pulse if the pulse coordinates are in your
-				 * domain */
+			pulseX = 64;  
+			pulseY = 64;
+#ifdef DEBUG
+			if(myrank == 0)/* root issues msg */
+				printf("Pulse to issue @ (%d, %d)\n",pulseX, pulseY);
+#endif
+			if(pulseX <= myXmax && pulseX >= myXmin && 
+			   pulseY >= myYmin && pulseY <= myYmax){
+				/* issue only if pulse loc is in your domain */
+#ifdef DEBUG
+	printf("\tP%d, pulse(%d,%d) is mine\n",myrank, pulseX, pulseY);
+#endif
 				/* narrow pulse */
-
-				//ARRVAL(u1, x, y) = pulse;
-				/*pulses need to be adjusted to the local domain */
+				/* pulses need to be adjusted to the local domain */
 				x = pulseX - myXmin;
 				y = pulseY - myYmin;
 
+				dTemp = u1[x][y];/* preserve original value */
+				u1[x][y] = 0;
 				u1[x][y] = pulse;
 
 				lastPulseX = x;
 				lastPulseY = y;
 				lastPulseT = l;
 #ifdef DEBUG
-				printf("p%d,t%d: pulse(%d) @(%d,%d,%4.2f), U0=%4.2f\n", myrank, l, pulseCount+1, x, y, pulse, ARRVAL(u0, x, y));
+				printf("\tP%d,t%d: pulse(%d)@(%d,%d,%4.2f), old=%4.2f, new=%4.2f\n"
+						,myrank,l,pulseCount+1,pulseX,pulseY,pulse,
+						dTemp, u1[x][y]);
 #endif
 			}
 			pulseCount++;
 			pulseTimes[l] = 1;
 		}	
 		
-#endif /* ISSUEPULSE */
 #ifdef EXCHANGEDATA
 			/* communicate array updates to other nodes 
 			 * shift each domain's boundaries to its neighbor */
@@ -357,7 +373,7 @@ int main(int argc, char* argv[]) {
 				tag = NORTH;
 				/* gather the data to send */
 				for(i = 1; i < chunk_size; ++i){
-					myBorder[i-1] = ARRVAL(u1, i, chunk_size); //u1[i][chunk_size];
+					myBorder[i-1] = ARRVAL(u1, i, chunk_size);
 				}
 				MPI_Send(myBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart);
 			}
@@ -421,9 +437,6 @@ int main(int argc, char* argv[]) {
 			}
 #endif /* EXCHANGEDATA */
 #ifdef UPDATEDOMAIN
-#ifdef DEBUG
-		printf("P%d: Updating my Domain\n", myrank);
-#endif
 		/* calculate wave intensity @ each location in the domain */
 		for(i=1; i <= chunk_size; ++i){
 			for(j=1; j <= chunk_size; ++j){
@@ -431,8 +444,6 @@ int main(int argc, char* argv[]) {
 					ARRVAL(u0, i, j),	ARRVAL(u1, i+1, j), 
 					ARRVAL(u1, i, j+1), ARRVAL(u1, i-1, j), 
 					ARRVAL(u1, i, j-1), r);
-				/* TODO: switch back to correct calc */
-				ARRVAL(u2, i, j) =  -1.0 * myrank;
 			}
 		}
 #endif /* UPDATEDOMAIN */
@@ -442,7 +453,6 @@ int main(int argc, char* argv[]) {
 		u1 = u2;
 		u2 = u0;
 		u0 = utemp;
-		printf("P%d max = %2.4f\n",myrank, findMaxMag(u1, myDomSize));
 		MPI_Barrier(comm_cart);/* barrier at the end of each iteration to keep everyone in synch */
 	}/* end for l=0:tmax */
 
@@ -466,6 +476,7 @@ int main(int argc, char* argv[]) {
 		if(Uall == NULL) printf("Error: P%d: malloc failed for Uall(%d B)\n", myrank, numBytesPerRow );
 		for(i=0; i < domSize; ++i){
 			Uall[i] = &Ualldata[i * domSize];
+			/* zero the matrix */
 			for (j = 0; j < domSize; j++) {
 				Ualldata[i+j] = 0.0;
 			}
@@ -480,10 +491,13 @@ int main(int argc, char* argv[]) {
 		if(theirDomain == NULL) printf("Error: P%d malloc failed for theirDomain(%d B)", myrank,  numBytesPerRow );
 		for(i=0; i < myDomSize; i++){
 			theirDomain[i] = &theirDomainData[i*myDomSize];
+			for (j = 0; j < myDomSize; j++) {
+				theirDomainData[i+j] = 0.0;	
+			}
+		
 		}
-
+		/* zero the matrix */
 		for (i = 0; i < numElements; i++) {
-			theirDomainData[i] = 0.0;/* code */
 		}
 		/* end (create master matrix) */
 		
@@ -566,7 +580,8 @@ int main(int argc, char* argv[]) {
 
 				fflush(stdout);
 			#endif
-				/* u1[0] is the pointer to the first element in the data array */
+				/* u1[0] is the pointer to the first element in the data array
+				 * if just u1 is used, erroneous, HUGE values are sent */
 				MPI_Isend(u1[0], numElements, MPI_DOUBLE, 0, tag, comm_cart, &request); /* non-blocking send */
 #ifdef DEBUG
 				printf("P%d: SENT %d doubles to master...\n",myrank, numElements);
@@ -622,18 +637,16 @@ int main(int argc, char* argv[]) {
 	}
 #endif /* FREEMEMORY */
 
-#ifdef ISSUEPULSE
 	/* print total number of pulses */
 	if (myrank == 0) {
 		printf("P(%d) pulseCount=%d\npulseTimes[", myrank, pulseCount);
 		for(i = 0; i < tmax; i++){
 			if (pulseTimes[i] == 1) {
-				printf("\t%d", i);
+				printf(" %d", i);
 			}
 		}
 		printf("]\n");
 	}
-#endif /* ISSUEPULSE */
 	
 #ifdef DEBUG
 	/* prevent anyone from exiting until they've synchronized at the barrier */
@@ -683,14 +696,16 @@ double getNextValue(double u1, double u0, double u1e, double u1s, double u1w, do
 
 double findMaxMag(double** u, int domSize){
 	int i,j;
-	double maxMag=0;
+	/* set to first value in u so as to allow negative values */
+	double gMax=u[0][0];
 	for(j=0; j < domSize; ++j){
 		for(i=0; i<domSize; ++i){
-			if(ARRVAL(u, i, j) > maxMag)
-				maxMag = ARRVAL(u, i, j);
+			if(ARRVAL(u, i, j) > gMax){
+				gMax = ARRVAL(u, i, j);
+			}
 		}	
 	}
-	return maxMag;
+	return gMax;
 }
 
 double rowMax(double * u, int rowLength){
