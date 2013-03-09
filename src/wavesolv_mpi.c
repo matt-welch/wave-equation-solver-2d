@@ -65,7 +65,7 @@ int main(int argc, char* argv[]) {
 
 	/* declare t, x, y as shorts to index the domain */
     int x, y;
-	int dt, dx, dy; /* step size for t, x, y*/
+	double dt, dx, dy; /* step size for t, x, y*/
     int tmax, xmax, ymax, xmid, ymid, domSize;  
 	int myXmin, myXmax, myYmin, myYmax, myDomSize;
     
@@ -167,7 +167,7 @@ int main(int argc, char* argv[]) {
 	if(argc > 1)
 		tmax = atoi(argv[1]);
 	else
-		tmax = 5;	
+		tmax = 50;	
 	/* TODO: make domSize an input parameter */
 	domSize = xmax = ymax = 256 + 2; /* two greater than 480 for ghost rows*/ 
 	xmid = ymid = (domSize / 2) - 1; /* midpoint of the domain */
@@ -178,7 +178,7 @@ int main(int argc, char* argv[]) {
 	if(argc > 2)
 		pulse = atoi(argv[2]);
 	else 
-		pulse = 5.0;
+		pulse = 1.0;
 	pulseThreshPct = 0.2; /* 20% of intitial pulse height */ 
 	pulseThresh = pulse * pulseThreshPct;
 
@@ -199,12 +199,14 @@ int main(int argc, char* argv[]) {
 #endif
 
 	/* step sizes for t, x, & y*/
-	dt = 40; /* 42 */
-	dx = dy = 90;
+	dt = 0.40; /* 42 */
+	dx = dy = 0.90;
 	CFL = checkCFL(dx, dy, dt);
 	r = dt/dx;
 
-	if(myrank==0) printf("CFL = %3.3f\n", CFL);
+	if(myrank==0){
+	   	printf("CFL = %3.3f r = %3.3f\t", CFL, r);
+	}
 	/* allocate memory for arrays */
 	pulseTimes = malloc(sizeof(char) * tmax); 
 
@@ -311,6 +313,12 @@ int main(int argc, char* argv[]) {
 		myMaxMag = findMaxMag(u1,chunk_size);
 #ifdef DEBUG
 	printf("P%d(t%d): max=%2.2f\n",myrank,l,myMaxMag);
+	if(!myrank){
+		myMaxMag = findMaxMag(u0,chunk_size);
+		printf("P%d(t%d): U0max=%2.2f\n",myrank,l,myMaxMag);
+		myMaxMag = findMaxMag(u1,chunk_size);
+		printf("P%d(t%d): U2max=%2.2f\n",myrank,l,myMaxMag);
+	}
 #endif
 	/* int 
 	 * MPI_Gather(void *sendbuf, int sendcount, MPI_Datatype sendtype,
@@ -325,7 +333,10 @@ int main(int argc, char* argv[]) {
 #endif
 	
 		gMax = rowMax(gMaxEach, 4);	
-		if( gMax < pulseThresh ){/* issue pulse if global max mag 
+#ifdef DEBUG
+	if(!myrank) printf("gMax=%4.2f\n", gMax);
+#endif
+		if( l > 2 && gMax < pulseThresh ){/* issue pulse if global max mag 
 		*	has degraded below threshhold of initial pulse magnitude */
 		
 			/* figure out where the pulse is going to be
@@ -440,6 +451,7 @@ int main(int argc, char* argv[]) {
 		/* calculate wave intensity @ each location in the domain */
 		for(i=1; i <= chunk_size; ++i){
 			for(j=1; j <= chunk_size; ++j){
+				dTemp = u1[i][j];
 				ARRVAL(u2, i, j) = getNextValue(ARRVAL(u1, i, j), 
 					ARRVAL(u0, i, j),	ARRVAL(u1, i+1, j), 
 					ARRVAL(u1, i, j+1), ARRVAL(u1, i-1, j), 
@@ -678,7 +690,9 @@ double checkCFL(double dx, double dy, double dt){
     return (dt/dx + dt/dy); 
 }
 
-double getNextValue(double u1, double u0, double u1e, double u1s, double u1w, double u1n, double r){
+double getNextValue(double u1, double u0, 
+		double u1e, double u1s, double u1w, double u1n, 
+		double r){
     /* u(l-1,i,j)       = u0      (last center)
      *
      * u(l,i,j)         = u1      (center)
@@ -690,8 +704,15 @@ double getNextValue(double u1, double u0, double u1e, double u1s, double u1w, do
      * u(l+1,i,j)       = u2        (solving for this)
      */
 	double value;
-	value = 2*u1 - u0 + r*r*(u1e + u1w + u1n + u1s - 4*u1) ;
-    return((value)); 
+	value = 2.0*u1 - u0 + r*r*(u1e + u1w + u1n + u1s - 4.0*u1) ;
+#ifdef VERBOSE
+	if(value > u1){
+		printf("\tu1=%2.2f,u0=%2.2f\n\tE=%2.2f,S=%2.2f,W=%2.2f,N=%2.2f\n\tr=%1.4f\tval=%2.2f\n",
+			u1,u0,u1e,u1s,u1w,u1n,r,value);
+		
+	}
+#endif
+	return((value)); 
 }
 
 double findMaxMag(double** u, int domSize){
