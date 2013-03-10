@@ -1,6 +1,9 @@
 close all
 clear all
-load output.txt
+fname = 'output';
+plottype = 'mesh';
+load([fname,'.txt'])
+eval(['output = ',fname,';'])
 domSize = sqrt(length(output));
 X=1:domSize;
 Y=1:domSize;
@@ -14,7 +17,12 @@ for(i=1:length(Z))
 end
 Z=reshape(Z,domSize,domSize);
 figure;
-meshz(X,Y,Z);
+if(plottype == 'mesh')
+    meshz(X,Y,Z);
+else
+    surf(X, Y, Z); % ends up with lots of black
+end
+
 azimuth = -7;
 elevation = 43;
 view(azimuth,elevation);
