@@ -36,6 +36,7 @@
 #define ARRVAL(u,i,j)     u[ (i) ][ (j) ] 
 
 /* function prototypes */
+void	filePrintMatrix(char* fname, double ** array,int length);
 double	checkCFL(double dx, double dy, double dt);
 double	getNextValue(double u1, double u0, double u1e, double u1s, double u1w, double u1n, double r);
 double	rowMax(double * u, int rowLength);
@@ -167,21 +168,26 @@ int main(int argc, char* argv[]) {
 	if(argc > 1)
 		tmax = atoi(argv[1]);
 	else
-		tmax = 50;	
-	/* TODO: make domSize an input parameter */
-	domSize = xmax = ymax = 256 + 2; /* two greater than 480 for ghost rows*/ 
+		tmax = 5;	
+
+	/* domSize is input arg #2 */
+	if(argc > 2)
+		domSize = atoi(argv[2]);
+	else 
+		domSize = 256;
+
+	xmax = ymax = domSize = domSize + 2; /* two greater for ghost rows*/ 
 	xmid = ymid = (domSize / 2) - 1; /* midpoint of the domain */
 	chunk_size = (domSize - 2)/dims[0];
 	myDomSize = chunk_size + 2;
 
 	/* pulse size and threshhold at which next pulse happens */
-	if(argc > 2)
-		pulse = atoi(argv[2]);
+	if(argc > 3)
+		pulse = atoi(argv[3]);
 	else 
 		pulse = 1.0;
 	pulseThreshPct = 0.2; /* 20% of intitial pulse height */ 
 	pulseThresh = pulse * pulseThreshPct;
-
 
 	/* calculate the x & y coordinates of the node's subdomain */
 	myXmin =  chunk_size *  coords[0];
@@ -199,13 +205,13 @@ int main(int argc, char* argv[]) {
 #endif
 
 	/* step sizes for t, x, & y*/
-	dt = 0.45; /* 42 */
+	dt = 0.42; /* 42 */
 	dx = dy = 0.90;
 	CFL = checkCFL(dx, dy, dt);
 	r = dt/dx;
 
 	if(myrank==0){
-	   	printf("CFL = %3.3f r = %3.3f\t", CFL, r);
+	   	printf("CFL = %3.3f r = %3.3f\n", CFL, r);
 	}
 	/* allocate memory for arrays */
 	pulseTimes = malloc(sizeof(char) * tmax); 
@@ -244,7 +250,7 @@ int main(int argc, char* argv[]) {
 
 	/* zero memory */	
 	for(i=0; i<numElements; i++){
-		Adata[i] = Bdata[i] = Cdata[i] = 0.0;
+		Adata[i] = Bdata[i] = Cdata[i] = (double) myrank;//0.0;
 	}
 
 	/* allocate memory for border rows */
@@ -309,23 +315,23 @@ int main(int argc, char* argv[]) {
 		 * determine maximum of each sub-domain and AllReduce to everyone
 		 * use findMaxMag on each subdomain
 		*/
-		/* TODO START HERE  findMaxMag may not be working */
 		myMaxMag = findMaxMag(u1,chunk_size);
-#ifdef VERBOSE
-	printf("P%d(t%d): max=%2.2f\n",myrank,l,myMaxMag);
+#ifdef DEBUG
+		printf("P%d(t%d): max=%2.2f\n",myrank,l,myMaxMag);
 		if(!myrank){
 			myMaxMag = findMaxMag(u0,chunk_size);
 			printf("P%d(t%d): U0max=%2.2f\n",myrank,l,myMaxMag);
 			myMaxMag = findMaxMag(u1,chunk_size);
 			printf("P%d(t%d): U2max=%2.2f\n",myrank,l,myMaxMag);
 		}
+		fflush(stdout);
 #endif
 		MPI_Gather(&myMaxMag, 1, MPI_DOUBLE, 
 				gMaxEach, numprocs, MPI_DOUBLE, 
 				0, comm_cart );	
 	
 		gMax = rowMax(gMaxEach, numprocs);	
-#ifdef VERBOSE
+#ifdef DEBUG
 		if(!myrank) printf("gMax=%4.2f\n", gMax);
 #endif
 		if( l > 1 && gMax < pulseThresh ){/* issue pulse if global max mag 
@@ -334,17 +340,21 @@ int main(int argc, char* argv[]) {
 			/* figure out where the pulse is going to be
 			 *  TODO rotate */
 			pulseSide=0;
-			pulseX = 64;  
-			pulseY = 64;
+			pulseX = 64; //xmid - 16; 
+			pulseY = 64; //ymid - 16;
 #ifdef DEBUG
-			if(myrank == 0)/* root issues msg */
-				printf("Pulse to issue @ (%d, %d)\n",pulseX, pulseY);
+			/* root issues msg */
+			if( myrank == 0){
+				printf("t%d:Pulse to issue @ (%d, %d)\n",l,pulseX, pulseY);
+				fflush(stdout);
+			}
 #endif
 			if(pulseX <= myXmax && pulseX >= myXmin && 
 			   pulseY >= myYmin && pulseY <= myYmax){
 				/* issue only if pulse loc is in your domain */
 #ifdef DEBUG
-	printf("\tP%d, pulse(%d,%d) is mine\n",myrank, pulseX, pulseY);
+				printf("\tP%d, pulse(%d,%d) is mine\n",myrank, pulseX, pulseY);
+				fflush(stdout);
 #endif
 				/* narrow pulse */
 				/* pulses need to be adjusted to the local domain */
@@ -369,32 +379,46 @@ int main(int argc, char* argv[]) {
 		}	
 		
 #ifdef EXCHANGEDATA
+		/* TODO: exchange is not working */
 			/* communicate array updates to other nodes 
 			 * shift each domain's boundaries to its neighbor */
 			/* NORTH-SOUTH border exchange first */
 			if(nbors[NORTH] > -1){/* you have a north-neighbor to send to*/
+				if(myrank == 0 & l == 50){
+					filePrintMatrix("preexchg.txt",u1,myDomSize);
+				}
 				tag = NORTH;
 				/* gather the data to send */
-				for(i = 1; i < chunk_size; ++i){
-					myBorder[i-1] = ARRVAL(u1, i, chunk_size);
+				for(i = 1; i <= chunk_size; ++i){
+					myBorder[i-1] = myrank; //u1[i][chunk_size];
+						//ARRVAL(u1, i, chunk_size);
 				}
-				MPI_Send(myBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart);
+#ifdef DEBUG
+				if(myrank){ 
+					printf("P%d,t%d: myBorderMax = %2.2f\n",myrank, l,rowMax(myBorder,chunk_size) );
+				
+				}
+#endif
+				MPI_Isend(myBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart, &request);
 			}
 			if(nbors[SOUTH] > -1){/* you have a south neighbor to rcv from */
 				tag = NORTH;
 				ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart, &status);
+#ifdef DEBUG
+	if(myrank) printf("P%d,t%d: P%d-BorderMax = %2.2f\n",myrank, l,nbors[SOUTH],rowMax(theirBorder,chunk_size) );
+#endif
 				for(i = 1; i < chunk_size; ++i){/* put their border in my ghost row */
 					ARRVAL(u1, i, 0) = theirBorder[i-1];
-					//u1[i][0] = theirBorder[i-1];
 				}
 
+				
 				/* you have a south neighbor to send data to */
 				tag = SOUTH;
 				/* gather the data to send */
 				for(i = 1; i < chunk_size; ++i){
 					myBorder[i-1] = ARRVAL(u1, i, 0); //u1[i][0];
 				}
-				MPI_Send(myBorder, chunk_size, MPI_DOUBLE, nbors[SOUTH], tag, comm_cart);
+				MPI_Isend(myBorder, chunk_size, MPI_DOUBLE, nbors[SOUTH], tag, comm_cart, &request);
 			}
 			if(nbors[NORTH] > -1){/* you have a north-neighbor to receive from */
 				tag = SOUTH;
@@ -523,7 +547,6 @@ int main(int argc, char* argv[]) {
 			fflush(stdout);
 #endif
 			ierr = MPI_Recv(theirDomainData, numElements, MPI_DOUBLE, source, tag, comm_cart, &status);
-			/* data is corrupted coming out of MPI_Recv */
 #ifdef SPOOFTHEIRDOMAIN
 			/* spoofs theirDomain to look like a diamond plane */
 			for (i = 0; i < chunk_size; i++) {
@@ -535,7 +558,7 @@ int main(int argc, char* argv[]) {
 			for (i = 0; i < numElements; i++) {
 					theirDomainData[i] = (double)i ; 
 			}
-#endif /* SPOOFTHEIRDOMAIN  - PROBLEM @ MPI_Recv*/
+#endif /* SPOOFTHEIRDOMAIN */
 
 #ifdef DEBUG
 			printf("P%d: received data from P%d, source=%d, tag=%d\n", myrank, source, status.MPI_SOURCE, status.MPI_TAG);
@@ -605,6 +628,8 @@ int main(int argc, char* argv[]) {
 #ifdef DEBUG
 		printf("p%d Writing to output.txt....\n",myrank);
 #endif
+		filePrintMatrix("outputtest.txt",Uall,domSize);
+
 		fp=fopen("output.txt", "w");
 	    for(i = 1; i < domSize-1; ++i){ 
 	        for(j = 1; j < domSize-1; ++j){ 
@@ -675,6 +700,19 @@ int main(int argc, char* argv[]) {
 }/* end main() */
 
 /* begin local functions */
+/* function to print a matrix to a file */
+void filePrintMatrix(char* fname, double ** array,int length){
+	FILE * fp;
+	int i, j;
+	fp=fopen(fname, "w");
+	/* assumes there is a border row which should not be printed */
+	for(i = 1; i < length-1; ++i){ 
+	    for(j = 1; j < length-1; ++j){ 
+			fprintf(fp,"%4.2f\n", array[i][j]);
+	    }
+	}
+	return;
+}
 /* function to check Courant-Friedrichs-Lewy condition 
  * for the wave equation solver to be stable, the value of c 
  * should be less than 1 */
