@@ -62,6 +62,8 @@ Compilation may then be completed with make.
 Run Instructions: 
 On the cluster or a computer, the program should simply be run with: 
 	mpiexec -n numProcs ./wavesolv_mpi
+example: 
+	mpiexec -n 4 ./wavesolv_mpi 500 256 10.0
 
 
 
@@ -70,11 +72,6 @@ On the cluster or a computer, the program should simply be run with:
 2) You can simply use two zero matrices for timesteps l=0 and l=1
 3) You can simply hard code delta x/y and delta t to fulfill the CFL condition
 4) An output text file must be provided with your codes.
-
-ideas:
-use shorts for t, x, y
-use integer for u like 32 bit A/D
-output
 
 
 
