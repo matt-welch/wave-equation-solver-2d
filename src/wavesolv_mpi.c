@@ -416,6 +416,7 @@ int main(int argc, char* argv[]) {
 				/* verified that good data is in myBorder here */
 				MPI_Send(myBorder, chunk_size, MPI_DOUBLE, 
 						nbors[NORTH], tag, comm_cart);
+				/* TODO: START HERE: border exchange send/recv broken */
 			}
 			if(nbors[SOUTH] > -1){/* you have a south neighbor to rcv from */
 				tag = NORTH;
