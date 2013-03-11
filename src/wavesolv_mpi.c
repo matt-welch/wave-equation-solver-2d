@@ -24,10 +24,10 @@
 #define MASTER 4
 
 /* defines controlling which parts of the program are compiled */
-//#define ISSUEPULSE /* doesn't work yet */
+#define ISSUEPULSE 
 #define EXCHANGEDATA
 #define UPDATEDOMAIN
-#define SENDTOMASTER /* seg faulting on MPI_Recv */
+#define SENDTOMASTER 
 #define OUTPUT
 #define FREEMEMORY
 //#define ZEROLASTPULSE /* doesn't work yet */
@@ -168,7 +168,7 @@ int main(int argc, char* argv[]) {
 	if(argc > 1)
 		tmax = atoi(argv[1]);
 	else
-		tmax = 5;	
+		tmax = 10;	
 
 	/* domSize is input arg #2 */
 	if(argc > 2)
@@ -201,7 +201,6 @@ int main(int argc, char* argv[]) {
 #ifdef DEBUG
 	printf("P%d, coords[%d,%d], x[%d,%d], y[%d,%d]\n", myrank, coords[0], coords[1], myXmin,myXmax,myYmin,myYmax);
 	fflush(stdout);
-	MPI_Barrier(comm_cart);
 #endif
 
 	/* step sizes for t, x, & y*/
@@ -215,6 +214,9 @@ int main(int argc, char* argv[]) {
 	}
 	/* allocate memory for arrays */
 	pulseTimes = malloc(sizeof(char) * tmax); 
+	for (i = 0; i < tmax; i++) {
+		pulseTimes[i] = 0;
+	}
 
 	/* allocate contiguous memory for array  */
 	numElements	   = myDomSize * myDomSize;
@@ -250,7 +252,7 @@ int main(int argc, char* argv[]) {
 
 	/* zero memory */	
 	for(i=0; i<numElements; i++){
-		Adata[i] = Bdata[i] = Cdata[i] = (double) myrank;//0.0;
+		Adata[i] = Bdata[i] = Cdata[i] = 0.0000; //0.0;
 	}
 
 	/* allocate memory for border rows */
@@ -259,9 +261,14 @@ int main(int argc, char* argv[]) {
 	if(myBorder == NULL) printf("Error: P%d: malloc failed for myBorder(%d B)\n", myrank, numBytesPerRow);
 	theirBorder = malloc(numBytesPerRow);
 	if(theirBorder == NULL) printf("Error: P%d: malloc failed for theirBorder(%d B)\n", myrank, numBytesPerRow);
-
+	for (i = 0; i < chunk_size; i++) {
+		myBorder[i] = theirBorder[i] = 0.0;	/* zero borders */
+	}
 	/* allocate memory for gMaxEach */
 	gMaxEach = malloc( numprocs * sizeof(double));
+	for (i = 0; i < numprocs; i++) {
+		gMaxEach[i] = 0.0;
+	}
 
 	/* use MPI_shift to determine the location of neighbor domain */
 	source = myrank;   /* calling process rank in 2D communicator */
@@ -296,7 +303,7 @@ int main(int argc, char* argv[]) {
 		MPI_Cart_coords(comm_cart, nbors[WEST], 2, nborCoords);
 	}
 
-#ifdef DEBUG
+#ifdef VERBOSE
 	printf("P%d: myXmin(%d), myXmax(%d), myYmin(%d), myYmax(%d), chunk(%d)\n",myrank,myXmin,myXmax,myYmin,myYmax,chunk_size);
 #endif 
 	/* cycle sequence: 
@@ -306,24 +313,22 @@ int main(int argc, char* argv[]) {
 	 * */
 
 	/* loop through time at single step intervals */
-	lastPulseT = 3;
+	lastPulseT = 0;
 	pulseSide=0;
 	x = xmid;
 	y = 0;
+#ifdef DEBUG
+	if(!myrank) printf("Beginning time series\n");
+#endif
+	MPI_Barrier(comm_cart);
 	for(l = 0; l < tmax; ++l){ 
 		/*
 		 * determine maximum of each sub-domain and AllReduce to everyone
 		 * use findMaxMag on each subdomain
 		*/
 		myMaxMag = findMaxMag(u1,chunk_size);
-#ifdef DEBUG
+#ifdef VERBOSE
 		printf("P%d(t%d): max=%2.2f\n",myrank,l,myMaxMag);
-		if(!myrank){
-			myMaxMag = findMaxMag(u0,chunk_size);
-			printf("P%d(t%d): U0max=%2.2f\n",myrank,l,myMaxMag);
-			myMaxMag = findMaxMag(u1,chunk_size);
-			printf("P%d(t%d): U2max=%2.2f\n",myrank,l,myMaxMag);
-		}
 		fflush(stdout);
 #endif
 		MPI_Gather(&myMaxMag, 1, MPI_DOUBLE, 
@@ -331,17 +336,26 @@ int main(int argc, char* argv[]) {
 				0, comm_cart );	
 	
 		gMax = rowMax(gMaxEach, numprocs);	
-#ifdef DEBUG
-		if(!myrank) printf("gMax=%4.2f\n", gMax);
+#ifdef VERBOSE
+		if(!myrank) {
+			printf("t%d: Gather: gMAX=[%2.2f %2.2f %2.2f %2.2f]\n",
+				l,gMaxEach[0],gMaxEach[1],gMaxEach[2],gMaxEach[3]); 
+		}
+#endif
+#ifdef VERBOSE
+		if(!myrank) {
+			printf("gMax=%4.2f\n", gMax);
+		}
 #endif
 		if( l > 1 && gMax < pulseThresh ){/* issue pulse if global max mag 
 		*	has degraded below threshhold of initial pulse magnitude */
 		
+#ifdef ISSUEPULSE
 			/* figure out where the pulse is going to be
 			 *  TODO rotate */
 			pulseSide=0;
-			pulseX = 64; //xmid - 16; 
-			pulseY = 64; //ymid - 16;
+			pulseX = xmid - 16; 
+			pulseY = ymid - 16;
 #ifdef DEBUG
 			/* root issues msg */
 			if( myrank == 0){
@@ -353,7 +367,8 @@ int main(int argc, char* argv[]) {
 			   pulseY >= myYmin && pulseY <= myYmax){
 				/* issue only if pulse loc is in your domain */
 #ifdef DEBUG
-				printf("\tP%d, pulse(%d,%d) is mine\n",myrank, pulseX, pulseY);
+				printf("\tP%d, pulse(%d,%d) is mine\n",
+						myrank, pulseX, pulseY);
 				fflush(stdout);
 #endif
 				/* narrow pulse */
@@ -377,36 +392,44 @@ int main(int argc, char* argv[]) {
 			pulseCount++;
 			pulseTimes[l] = 1;
 		}	
-		
+#endif	/* ISSUEPULSE */
+
 #ifdef EXCHANGEDATA
 		/* TODO: exchange is not working */
 			/* communicate array updates to other nodes 
 			 * shift each domain's boundaries to its neighbor */
 			/* NORTH-SOUTH border exchange first */
 			if(nbors[NORTH] > -1){/* you have a north-neighbor to send to*/
-				if(myrank == 0 & l == 50){
-					filePrintMatrix("preexchg.txt",u1,myDomSize);
-				}
 				tag = NORTH;
 				/* gather the data to send */
 				for(i = 1; i <= chunk_size; ++i){
-					myBorder[i-1] = myrank; //u1[i][chunk_size];
-						//ARRVAL(u1, i, chunk_size);
+					myBorder[i-1] = u1[i][chunk_size];
 				}
-#ifdef DEBUG
-				if(myrank){ 
-					printf("P%d,t%d: myBorderMax = %2.2f\n",myrank, l,rowMax(myBorder,chunk_size) );
-				
+#ifdef VERBOSE 
+				dTemp = rowMax(myBorder,chunk_size);
+				if(dTemp > 0.0){
+					printf("P%d,t%d: myMax = %2.2f\n",
+							myrank,l, dTemp);
+					/* printRow(myBorder, chunk_size);*/
 				}
-#endif
-				MPI_Isend(myBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart, &request);
+#endif		
+				/* verified that good data is in myBorder here */
+				MPI_Send(myBorder, chunk_size, MPI_DOUBLE, 
+						nbors[NORTH], tag, comm_cart);
 			}
 			if(nbors[SOUTH] > -1){/* you have a south neighbor to rcv from */
 				tag = NORTH;
-				ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart, &status);
+				ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE,
+					   	nbors[NORTH], tag, comm_cart, &status);
 #ifdef DEBUG
-	if(myrank) printf("P%d,t%d: P%d-BorderMax = %2.2f\n",myrank, l,nbors[SOUTH],rowMax(theirBorder,chunk_size) );
+				dTemp = rowMax(theirBorder,chunk_size);
+				if( dTemp > 0.00 ){
+					printf("P%d,t%d: P%d-BorderMax = %2.2f\n",
+							myrank, l,nbors[SOUTH], dTemp);
+					printRow(theirBorder, chunk_size);
+				}
 #endif
+				/* verified that copy-into mydomain works */
 				for(i = 1; i < chunk_size; ++i){/* put their border in my ghost row */
 					ARRVAL(u1, i, 0) = theirBorder[i-1];
 				}
@@ -492,7 +515,7 @@ int main(int argc, char* argv[]) {
 
 	if(myrank == 0){/* only root node enters here */
 	/* allocate a matrix to hold the final update */
-#ifdef DEBUG
+#ifdef VERBOSE
 		printf("End of time, collect and display data\n");
 		printf("P%d allocating master array, Uall\n", myrank);	
 #endif	
@@ -542,7 +565,7 @@ int main(int argc, char* argv[]) {
 
 		/* store the subdomains in the master matrix */
 		for(source = 1; source < numprocs; source++){
-#ifdef DEBUG
+#ifdef VERBOSE
 			printf("P%d, receiving %d doubles from P%d\n", myrank, numElements, source);
 			fflush(stdout);
 #endif
@@ -554,13 +577,9 @@ int main(int argc, char* argv[]) {
 					ARRVAL(theirDomain, i, j) = (double)i + (double)j;
 				}
 			}
-			/* spoofs theirDomainData to look like sloped plane */
-			for (i = 0; i < numElements; i++) {
-					theirDomainData[i] = (double)i ; 
-			}
 #endif /* SPOOFTHEIRDOMAIN */
 
-#ifdef DEBUG
+#ifdef VERBOSE
 			printf("P%d: received data from P%d, source=%d, tag=%d\n", myrank, source, status.MPI_SOURCE, status.MPI_TAG);
 			fflush(stdout);
 #endif
@@ -582,17 +601,9 @@ int main(int argc, char* argv[]) {
 					ARRVAL(Uall, x, y) = dTemp;	
 				}
 				
-#ifdef LASTPROBLEM
-				dTemp = rowMax(Uall[x],y);
-				if(dTemp > numElements){
-					printf("P%d: rowMax = %4.2f\n", myrank, dTemp);
-					printRow(Uall[x], myDomSize);
-				}else
-					printf("Row(%d)max = %2.4f\n",i,dTemp);
-#endif
 			}/* end for(i=1:chunk_size) */
 
-#ifdef DEBUG
+#ifdef VERBOSE
 			printf("P%d copied data from P%d\n", myrank, source);
 			//print2DArray(Uall, domSize);
 			fflush(stdout);
@@ -602,15 +613,14 @@ int main(int argc, char* argv[]) {
 		/* myrank != 0 */
 		for (i = 1; i < numprocs; i++) {
 			if (myrank == i) {
-			#ifdef DEBUG
+#ifdef VERBOSE
 				printf("P%d: sending data\n",myrank);
-
 				fflush(stdout);
-			#endif
+#endif
 				/* u1[0] is the pointer to the first element in the data array
 				 * if just u1 is used, erroneous, HUGE values are sent */
 				MPI_Isend(u1[0], numElements, MPI_DOUBLE, 0, tag, comm_cart, &request); /* non-blocking send */
-#ifdef DEBUG
+#ifdef VERBOSE
 				printf("P%d: SENT %d doubles to master...\n",myrank, numElements);
 				fflush(stdout);
 #endif
@@ -625,7 +635,7 @@ int main(int argc, char* argv[]) {
 #ifdef OUTPUT /* verified to work.  Not likely to have bugs */
 	/* print the last iteration to a file */
 	if(myrank == 0){
-#ifdef DEBUG
+#ifdef VERBOSE
 		printf("p%d Writing to output.txt....\n",myrank);
 #endif
 		filePrintMatrix("outputtest.txt",Uall,domSize);
@@ -636,7 +646,7 @@ int main(int argc, char* argv[]) {
 				fprintf(fp,"%4.2f\n", Uall[i][j]);
 	        }
 	    }
-#ifdef DEBUG
+#ifdef VERBOSE
 	 printf("P%d: closing file\n",myrank);
 	 fflush(stdout);
 #endif
@@ -647,7 +657,7 @@ int main(int argc, char* argv[]) {
 #ifdef FREEMEMORY
 	/* free memory for arrays */
 	/* free memory for u0 */
-#ifdef DEBUG
+#ifdef VERBOSE
 	printf("P%d Freeing contiguous memory...\n", myrank);
 #endif
 	fflush(stdout);
@@ -677,13 +687,7 @@ int main(int argc, char* argv[]) {
 		printf("]\n");
 	}
 	
-#ifdef DEBUG
-	/* prevent anyone from exiting until they've synchronized at the barrier */
-	printf("P%d is Entering Barrier\n",myrank);
-	fflush(stdout);
 	MPI_Barrier(comm_cart);
-	printf("P%d exits the barrier\n",myrank);
-#endif	
 		
 	/* finalize MPI */
 	MPI_Finalize();
