@@ -18,6 +18,10 @@ wavesolv_mpi: wavesolv_mpi.c
 	mpicc wavesolv_mpi.c -o wavesolv_mpi $(CONFIG) $(PARCONFIG)
 	ctags --c-kinds=+defglmpstux *.c
 
+# compile mpi program with logging to use in JumpShot
+log: wavesolv_mpi.c
+	mpicc.mpich2 wavesolv_mpi.c -mpe=mpilog -o wavesolv_mpi $(CONFIG) $(PARCONFIG)
+
 wavesolv_serial: wavesolv
 
 clean:
@@ -26,9 +30,9 @@ clean:
 tidy: clean
 	rm -f *.*~ *~
 
-DEBUG_FLAGS = -g3 -ggdb -O0 -DDEBUG -lm 
+DEBUG_FLAGS = -g3 -ggdb -O0 -DDEBUG -Wall -pedantic -lm
 CONFIG		= -Wall -pedantic -lm
-PARCONFIG	= -DPARALLEL -fopenmp 
+PARCONFIG	= -DPARALLEL 
 EASY_FLAGS	= -lm
 
 debug: CONFIG=$(DEBUG_FLAGS)
