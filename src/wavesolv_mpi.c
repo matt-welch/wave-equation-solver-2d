@@ -25,6 +25,7 @@
 
 /* defines controlling which parts of the program are compiled */
 #define ISSUEPULSE 
+#define ROTATEPULSE
 #define EXCHANGEDATA
 #define UPDATEDOMAIN
 #define SENDTOMASTER 
@@ -43,6 +44,14 @@ double	findMaxMag(double** u, int domSize);
 void	print2DArray(double **array, int length);
 void	printRow(double * array, int length);
 
+/* global typedefs and data */
+/* typedef to hold coordinates */
+typedef struct domain{
+	int	xmin,xmid,xmax,ymin,ymid,ymax,size;
+}domain_t;
+
+/* data */
+
 int main(int argc, char* argv[]) {
     /* declare variables */
 	
@@ -53,7 +62,6 @@ int main(int argc, char* argv[]) {
 	int ndims = 2;
 	int dims[2], period[2], reorder, chunk_size, ierr;
 	int numprocs, myrank, myCoords[2], nbors[4], nborCoords[2];
-	//int maxXcoord, maxYcoord;
 	
 	/* shift params */
 	int displ, source, dest, index;
@@ -63,13 +71,12 @@ int main(int argc, char* argv[]) {
 	double * theirBorder;
 	int tag;
 
-	/* declare t, x, y as shorts to index the domain */
+	/* declare t, x, y as ints to index the domain */
     int x, y;
 	double dt, dx, dy; /* step size for t, x, y*/
-    int tmax, xmid, ymid, domSize;  
-	//int xmax, ymax; 
-	int myXmin, myXmax, myYmin, myYmax, myDomSize;
-    
+    int tmax, xmid, ymid, domSize;/* entire domain */  
+	domain_t mydom;
+
     /* u is the wave magnitude as an double for best accuracy 
      * u0 is the array representing the domain for iteration l-1
      * u1 is the array representing the domain for iteration l
@@ -174,7 +181,7 @@ int main(int argc, char* argv[]) {
 	//xmax = ymax = domSize;
 	xmid = ymid = (domSize / 2) - 1; /* midpoint of the domain */
 	chunk_size = (domSize - 2)/dims[0];
-	myDomSize = chunk_size + 2;
+	mydom.size = chunk_size + 2;
 
 	/* pulse size and threshhold at which next pulse happens */
 	if(argc > 3)
@@ -185,16 +192,16 @@ int main(int argc, char* argv[]) {
 	pulseThresh = pulse * pulseThreshPct;
 
 	/* calculate the x & y coordinates of the node's subdomain */
-	myXmin =  chunk_size *  myCoords[0];
-	myXmax = (chunk_size * (myCoords[0]+1)) - 1;
-	myYmin =  chunk_size *  myCoords[1];
-	myYmax = (chunk_size * (myCoords[1]+1)) - 1;
+	mydom.xmin =  chunk_size *  myCoords[0];
+	mydom.xmax = (chunk_size * (myCoords[0]+1)) - 1;
+	mydom.ymin =  chunk_size *  myCoords[1];
+	mydom.ymax = (chunk_size * (myCoords[1]+1)) - 1;
 
 	/* max coords: block location within the cart comm */
 	//maxYcoord = maxXcoord = (int) sqrt(numprocs) - 1;
 
 #ifdef DEBUG
-	printf("P%d, myCoords[%d,%d], x[%d,%d], y[%d,%d]\n", myrank, myCoords[0], myCoords[1], myXmin,myXmax,myYmin,myYmax);
+	printf("P%d, myCoords[%d,%d], x[%d,%d], y[%d,%d]\n", myrank, myCoords[0], myCoords[1], mydom.xmin,mydom.xmax,mydom.ymin,mydom.ymax);
 	fflush(stdout);
 #endif
 
@@ -214,16 +221,16 @@ int main(int argc, char* argv[]) {
 	}
 
 	/* allocate contiguous memory for array  */
-	numElements	   = myDomSize * myDomSize;
+	numElements	   = mydom.size * mydom.size;
 	numBytesAll    = numElements * sizeof(* Adata);
-	numBytesPerRow = myDomSize * sizeof(* A);
+	numBytesPerRow = mydom.size * sizeof(* A);
 
 	Adata = malloc(numBytesAll);
 	if(Adata == NULL) printf("Error: P%d malloc failed for Adata(%d B)", myrank,  numBytesAll );
 	A = malloc(numBytesPerRow);
 	if(A == NULL) printf("Error: P%d: malloc failed for A(%d B)\n", myrank, numBytesPerRow );
-	for(i=0; i < myDomSize; ++i){
-		A[i] = &Adata[i * myDomSize];
+	for(i=0; i < mydom.size; ++i){
+		A[i] = &Adata[i * mydom.size];
 	}
 	u0 = A;
 	
@@ -231,8 +238,8 @@ int main(int argc, char* argv[]) {
 	if(Bdata == NULL) printf("Error: P%d malloc failed for Bdata(%d B)", myrank,  numBytesAll );
 	B = malloc(numBytesPerRow);
 	if(B == NULL) printf("Error: P%d: malloc failed for B(%d B)\n", myrank, numBytesPerRow );
-	for(i=0; i < myDomSize; ++i){
-		B[i] = &Bdata[i * myDomSize];
+	for(i=0; i < mydom.size; ++i){
+		B[i] = &Bdata[i * mydom.size];
 	}
 	u1 = B;
 
@@ -240,8 +247,8 @@ int main(int argc, char* argv[]) {
 	if(Cdata == NULL) printf("Error: P%d malloc failed for Cdata(%d B)", myrank,  numBytesAll );
 	C = malloc(numBytesPerRow);
 	if(C == NULL) printf("Error: P%d: malloc failed for C(%d B)\n", myrank, numBytesPerRow );
-	for(i=0; i < myDomSize; ++i){
-		C[i] = &Cdata[i * myDomSize];
+	for(i=0; i < mydom.size; ++i){
+		C[i] = &Cdata[i * mydom.size];
 	}
 	u2 = C;
 
@@ -289,7 +296,7 @@ int main(int argc, char* argv[]) {
 	MPI_Cart_shift(comm_cart, index, displ, &source, &nbors[WEST]);
 
 #ifdef VERBOSE
-	printf("P%d: myXmin(%d), myXmax(%d), myYmin(%d), myYmax(%d), chunk(%d)\n",myrank,myXmin,myXmax,myYmin,myYmax,chunk_size);
+	printf("P%d: myXmin(%d), myXmax(%d), myYmin(%d), myYmax(%d), chunk(%d)\n",myrank,mydom.xmin,mydom.xmax,mydom.ymin,mydom.ymax,chunk_size);
 #endif 
 	/* cycle sequence: 
 	 * determine if a pulse is going to occur, issue one
@@ -302,7 +309,7 @@ int main(int argc, char* argv[]) {
 	x = xmid;
 	y = 0;
 #ifdef DEBUG
-	if(!myrank) printf("Beginning time series\n");
+	if(!myrank) printf("Beginning time series\n"); fflush(stdout);
 #endif
 	MPI_Barrier(comm_cart);
 	for(l = 0; l < tmax; ++l){ 
@@ -335,6 +342,16 @@ int main(int argc, char* argv[]) {
 #ifdef ISSUEPULSE
 	#ifdef ROTATEPULSE
 			/*  TODO rotate pulses around the perimeter*/
+			pulseSide = pulseCount % 4;
+			if(pulseSide == 0){			/* west */
+					pulseX = xmid-16; pulseY=ymid-16;
+			}else if(pulseSide == 1){	/* north */
+					pulseX = xmid-16; pulseY=ymid+16;
+			}else if(pulseSide == 2){	/* east */
+					pulseX = xmid+16; pulseY=ymid+16;
+			}else if(pulseSide == 3){	/* south */
+					pulseX = xmid+16; pulseY=ymid-16;
+			}
 	#else
 			/* default is static pulse, off center */
 			pulseSide=0;
@@ -348,8 +365,8 @@ int main(int argc, char* argv[]) {
 				fflush(stdout);
 			}
 #endif
-			if(pulseX <= myXmax && pulseX >= myXmin && 
-			   pulseY >= myYmin && pulseY <= myYmax){
+			if(pulseX <= mydom.xmax && pulseX >= mydom.xmin && 
+			   pulseY >= mydom.ymin && pulseY <= mydom.ymax){
 				/* issue only if pulse loc is in your domain */
 #ifdef DEBUG
 				printf("\tP%d, pulse(%d,%d) is mine\n",
@@ -358,15 +375,15 @@ int main(int argc, char* argv[]) {
 #endif
 				/* narrow pulse */
 				/* pulses need to be adjusted to the local domain */
-				x = pulseX - myXmin;
-				y = pulseY - myYmin;
+				x = pulseX - mydom.xmin;
+				y = pulseY - mydom.ymin;
 
 				dTemp = u1[x][y];/* preserve original value */
 				u1[x][y] = 0;
 				u1[x][y] = pulse;
 
-				lastPulseX = x;
-				lastPulseY = y;
+				lastPulseX = pulseX;
+				lastPulseY = pulseY;
 				lastPulseT = l;
 #ifdef DEBUG
 				printf("\tP%d,t%d: pulse(%d)@(%d,%d,%4.2f), old=%4.2f, new=%4.2f\n"
@@ -390,7 +407,7 @@ int main(int argc, char* argv[]) {
 				for(i = 1; i <= chunk_size; ++i){
 					myBorder[i-1] = u1[i][chunk_size];
 				}
-#ifdef VERBOSE 
+#ifdef VERBOSE
 				dTemp = rowMax(myBorder,chunk_size);
 				if(dTemp > 0.0){
 					printf("P%d,t%d: myMax = %2.2f\n",
@@ -401,6 +418,7 @@ int main(int argc, char* argv[]) {
 				/* verified that good data is in myBorder here */
 				ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE, 
 						nbors[NORTH], tag, comm_cart, &request);
+				if(ierr != 0) printf("P%d,t%d: ierr = %d\n",myrank,l,ierr);
 				/* TODO: START HERE: border exchange send/recv broken */
 			}
 			if(nbors[SOUTH] > -1){/* you have a south neighbor to rcv from */
@@ -419,8 +437,9 @@ int main(int argc, char* argv[]) {
 				for(i = 1; i < chunk_size; ++i){/* put their border in my ghost row */
 					ARRVAL(u1, i, 0) = theirBorder[i-1];
 				}
-
-				
+			}
+#ifdef SOUTHBORDER
+			if(nbors[SOUTH] > -1){
 				/* you have a south neighbor to send data to */
 				tag = SOUTH;
 				/* gather the data to send */
@@ -437,6 +456,8 @@ int main(int argc, char* argv[]) {
 					ARRVAL(u1, i, chunk_size+1) = theirBorder[i-1];
 				}
 			}
+#endif /* SOUTHBORDER */
+#ifdef EWEXCHANGE
 	
 			/* EAST-WEST border exchange second */
 			if(nbors[EAST] > -1){/* you have a EAST-neighbor to send to*/
@@ -473,6 +494,8 @@ int main(int argc, char* argv[]) {
 					/* put their border in my ghost row */
 				}
 			}
+#endif /* EWEXCHANGE */
+
 #endif /* EXCHANGEDATA */
 #ifdef UPDATEDOMAIN
 /* #pragma omp for */
@@ -499,7 +522,7 @@ int main(int argc, char* argv[]) {
 #ifdef SENDTOMASTER
 	/* Communicate domain contents to master */
 	MPI_Barrier(comm_cart);
-	numElements = myDomSize * myDomSize; 
+	numElements = mydom.size * mydom.size; 
 	tag = MASTER;
 
 	if(myrank == 0){/* only root node enters here */
@@ -523,15 +546,15 @@ int main(int argc, char* argv[]) {
 		}
 
 		/* allocate a small array to temporarily hold everyone else's final results */
-		numBytesAll = myDomSize * myDomSize * sizeof(* theirDomainData);
-		numBytesPerRow = myDomSize * sizeof(*theirDomain);
+		numBytesAll = mydom.size * mydom.size * sizeof(* theirDomainData);
+		numBytesPerRow = mydom.size * sizeof(*theirDomain);
 		theirDomainData = malloc(numBytesAll);
 		if(theirDomainData == NULL) printf("Error: P%d malloc failed for theirDomainData(%d B)", myrank,  numBytesAll ); 
 		theirDomain = malloc(numBytesPerRow);
 		if(theirDomain == NULL) printf("Error: P%d malloc failed for theirDomain(%d B)", myrank,  numBytesPerRow );
-		for(i=0; i < myDomSize; i++){
-			theirDomain[i] = &theirDomainData[i*myDomSize];
-			for (j = 0; j < myDomSize; j++) {
+		for(i=0; i < mydom.size; i++){
+			theirDomain[i] = &theirDomainData[i*mydom.size];
+			for (j = 0; j < mydom.size; j++) {
 				theirDomainData[i+j] = 0.0;	
 			}
 		
@@ -543,8 +566,8 @@ int main(int argc, char* argv[]) {
 		/* copy root node's values into array */
 		for(i = 1; i < chunk_size-1; i++){
 			for (j = 1; j < chunk_size-1; j++) {
-				x = myXmin + i -1;
-				y = myYmin + j -1;
+				x = mydom.xmin + i -1;
+				y = mydom.ymin + j -1;
 				ARRVAL(Uall, x, y) = ARRVAL(u1, i, j);	
 			}
 		}/* end for(i=1:chunk_size) */
@@ -573,14 +596,14 @@ int main(int argc, char* argv[]) {
 			MPI_Cart_coords(comm_cart, source, ndims, nborCoords);
 	
 			/* calculate the x & y coordinates of the node's subdomain */
-			myXmin =  chunk_size * nborCoords[0];
-			myYmin =  chunk_size * nborCoords[1];
+			mydom.xmin =  chunk_size * nborCoords[0];
+			mydom.ymin =  chunk_size * nborCoords[1];
 			/* copy data from theirDomain to complete domain */
-			for(i = 1; i < myDomSize; i++){
-				for (j = 1; j < myDomSize; j++) {
+			for(i = 1; i < mydom.size; i++){
+				for (j = 1; j < mydom.size; j++) {
 					/* x and y are adjusted to point into the large domain */
-					x = myXmin + i - 1;
-					y = myYmin + j - 1;
+					x = mydom.xmin + i - 1;
+					y = mydom.ymin + j - 1;
 					dTemp = ARRVAL(theirDomain, i, j);
 					ARRVAL(Uall, x, y) = dTemp;	
 				}
@@ -623,7 +646,7 @@ int main(int argc, char* argv[]) {
 #ifdef VERBOSE
 		printf("p%d Writing to output.txt....\n",myrank);
 #endif
-		filePrintMatrix("outputtest.txt",Uall,domSize);
+		filePrintMatrix("output.txt",Uall,domSize);
 
 #ifdef VERBOSE
 	 printf("P%d: closing file\n",myrank);

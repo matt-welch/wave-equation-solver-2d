@@ -20,7 +20,7 @@ wavesolv_mpi: wavesolv_mpi.c
 
 # compile mpi program with logging to use in JumpShot
 log: wavesolv_mpi.c
-	mpicc.mpich2 wavesolv_mpi.c -mpe=mpilog -o wavesolv_mpi $(CONFIG) $(PARCONFIG)
+	mpicc.openmpi wavesolv_mpi.c -o wavesolv_mpi $(CONFIG) $(PARCONFIG) -mpilog 
 
 wavesolv_serial: wavesolv
 
