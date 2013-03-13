@@ -25,7 +25,7 @@
 
 /* defines controlling which parts of the program are compiled */
 #define ISSUEPULSE 
-#define ROTATEPULSE
+//#define ROTATEPULSE
 #define EXCHANGEDATA
 #define UPDATEDOMAIN
 #define SENDTOMASTER 
@@ -424,7 +424,7 @@ int main(int argc, char* argv[]) {
 			if(nbors[SOUTH] > -1){/* you have a south neighbor to rcv from */
 				tag = NORTH;
 				ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE,
-					   	nbors[NORTH], tag, comm_cart, &status);
+					   	nbors[SOUTH], tag, comm_cart, &status);
 #ifdef DEBUG
 				dTemp = rowMax(theirBorder,chunk_size);
 				if( dTemp > 0.00 ){
@@ -438,7 +438,6 @@ int main(int argc, char* argv[]) {
 					ARRVAL(u1, i, 0) = theirBorder[i-1];
 				}
 			}
-#ifdef SOUTHBORDER
 			if(nbors[SOUTH] > -1){
 				/* you have a south neighbor to send data to */
 				tag = SOUTH;
@@ -451,13 +450,11 @@ int main(int argc, char* argv[]) {
 			}
 			if(nbors[NORTH] > -1){/* you have a north-neighbor to receive from */
 				tag = SOUTH;
-				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[SOUTH], tag, comm_cart, &status);
+				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE, nbors[NORTH], tag, comm_cart, &status);
 				for(i = 1;i < chunk_size; ++i){/* put their border in my ghost row */
 					ARRVAL(u1, i, chunk_size+1) = theirBorder[i-1];
 				}
 			}
-#endif /* SOUTHBORDER */
-#ifdef EWEXCHANGE
 	
 			/* EAST-WEST border exchange second */
 			if(nbors[EAST] > -1){/* you have a EAST-neighbor to send to*/
@@ -471,9 +468,9 @@ int main(int argc, char* argv[]) {
 			}
 			if(nbors[WEST] > -1){/* you have a WEST neighbor to rcv from */
 				tag = EAST;
-				ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE, nbors[EAST], tag, comm_cart, &status);
+				ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE, nbors[WEST], tag, comm_cart, &status);
 				for(i = 1;i < chunk_size; ++i){/* put their border in my ghost row */
-					ARRVAL(u1, chunk_size+1, i) = theirBorder[i-1];
+					ARRVAL(u1, 0, i) = theirBorder[i-1];
 					/* put their border in my ghost row */
 				}
 
@@ -488,13 +485,12 @@ int main(int argc, char* argv[]) {
 			}
 			if(nbors[EAST] > -1){/* you have a EAST-neighbor to receive from */
 				tag = WEST;
-				ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE, nbors[WEST], tag, comm_cart, &status);
+				ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE, nbors[EAST], tag, comm_cart, &status);
 				for(i = 1;i < chunk_size; ++i){
-					ARRVAL(u1, 0, i) = theirBorder[i-1];/* put their border in my ghost row */
+					ARRVAL(u1, mydom.size-1, i) = theirBorder[i-1];/* put their border in my ghost row */
 					/* put their border in my ghost row */
 				}
 			}
-#endif /* EWEXCHANGE */
 
 #endif /* EXCHANGEDATA */
 #ifdef UPDATEDOMAIN
@@ -564,8 +560,8 @@ int main(int argc, char* argv[]) {
 		/* send final update to master */
 		/* root node receives */
 		/* copy root node's values into array */
-		for(i = 1; i < chunk_size-1; i++){
-			for (j = 1; j < chunk_size-1; j++) {
+		for(i = 1; i < mydom.size; i++){
+			for (j = 1; j < mydom.size; j++) {
 				x = mydom.xmin + i -1;
 				y = mydom.ymin + j -1;
 				ARRVAL(Uall, x, y) = ARRVAL(u1, i, j);	
