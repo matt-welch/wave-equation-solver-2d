@@ -1,8 +1,10 @@
 close all
 clear all
+%path = '~/saguaroASU/cse598-HPC/p2/src/';
+path = '';
 fname = 'output';
 plottype = 'mesh';
-load([fname,'.txt'])
+load([path,fname,'.txt'])
 eval(['output = ',fname,';'])
 domSize = sqrt(length(output));
 X=1:domSize;
@@ -27,7 +29,7 @@ azimuth = -7;
 elevation = 43;
 view(azimuth,elevation);
 %title(['Rot=',num2str(rotation),', Elev=',num2str(elevation)]);
-interval = 50;
+%interval = 50;
 %axis([0 domSize+4 0 domSize+4 0 max(Z(:))]);
 disp(['min = ',num2str(min(output))])
 disp(['max = ',num2str(max(output))])
