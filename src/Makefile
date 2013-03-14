@@ -36,8 +36,8 @@ tidy: clean
 	rm -f *.*~ *~ *.asv
 
 DEBUG_FLAGS = -g3 -ggdb -O0 -DDEBUG -Wall -pedantic -lm
-CONFIG		= -Wall -pedantic -lm
-PARCONFIG	= -DPARALLEL 
+CONFIG		= -Wall -pedantic -lm 
+PARCONFIG	= -fopenmp
 EASY_FLAGS	= -lm
 
 debug: CONFIG=$(DEBUG_FLAGS)
