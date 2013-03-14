@@ -28,12 +28,19 @@
 #define ROTATEPULSE
 #define EXCHANGEDATA
 #define UPDATEDOMAIN
+#define ZEROPULSES
 #define SENDTOMASTER 
 #define OUTPUT
 #define FREEMEMORY
 
 /* define that controls how arrays are accessed */
 #define ARRVAL(u,i,j)     u[ (i) ][ (j) ] 
+
+/* global typedefs and data */
+/* typedef to hold coordinates */
+typedef struct domain{
+	int	xmin,xmid,xmax,ymin,ymid,ymax,size;
+}domain_t;
 
 /* function prototypes */
 void	filePrintMatrix(char* fname, double ** array,int length);
@@ -44,12 +51,7 @@ double	rowMax(double * u, int rowLength);
 double	findMaxMag(double** u, int domSize);
 void	print2DArray(double **array, int length);
 void	printRow(double * array, int length);
-
-/* global typedefs and data */
-/* typedef to hold coordinates */
-typedef struct domain{
-	int	xmin,xmid,xmax,ymin,ymid,ymax,size;
-}domain_t;
+int		isMyPulse(domain_t mydom, int x, int y);
 
 
 domain_t dom;
@@ -150,7 +152,7 @@ int main(int argc, char* argv[]) {
 	if(numprocs == 1 || numprocs == 4 || numprocs == 16 || numprocs == 256 ){
 		/* squares are easy to partition */
 		dims[0] = dims[1] = (int)sqrt(numprocs); /* square domain */
-		if(myrank==0) printf("NumProcs = %d, dims = %d\n", numprocs, dims[0]);
+		if(myrank==0) printf("NumProcs = %d, proc/side = %d\n", numprocs, dims[0]);
 	}else{
 		/* error out if a non-square numproc has be requested */
 		if(myrank==0) printf("Please only request a square number of processors (%d requested).\n",numprocs); 
@@ -215,7 +217,7 @@ int main(int argc, char* argv[]) {
 	r = dt/dx;
 
 	if(myrank==0){
-	   	printf("CFL = %3.3f r = %3.3f\n", CFL, r);
+	   	printf("CFL = %3.3f, r = %3.3f\n", CFL, r);
 	}
 	/* allocate memory for arrays */
 	pulseTimes = malloc(sizeof(char) * tmax); 
@@ -324,10 +326,8 @@ int main(int argc, char* argv[]) {
 			printf("P%d(t%d): max=%2.2f\n",myrank,l,myMaxMag);
 			fflush(stdout);
 	#endif
-			gMax = pulse;/* make sure gMax is not old */
+			//gMax = pulse;/* make sure gMax is not old */
 			/* Gather only when necessary */
-			/* MPI_Gather(&myMaxMag, 1, MPI_DOUBLE, 
-					gMaxEach, numprocs, MPI_DOUBLE, 0, comm_cart );	*/
 /* int MPI_Allgather(void *sendbuf, int  sendcount,
  *		MPI_Datatype sendtype, void *recvbuf, int recvcount,
  *		MPI_Datatype recvtype, MPI_Comm comm) */
@@ -335,18 +335,13 @@ int main(int argc, char* argv[]) {
 					1, MPI_DOUBLE, comm_cart);
 			gMax = rowMax(gMaxEach, numprocs);	
 			MPI_Barrier(comm_cart);
-	/* int MPI_Scatter(void *sendbuf, int sendcount, MPI_Datatype
-	 * sendtype,
-	 *     void *recvbuf, int recvcount, MPI_Datatype recvtype, int
-	 *     root,MPI_Comm comm) */
-//			MPI_Scatter(&gMax, 1, MPI_DOUBLE, &gMax, 1, MPI_DOUBLE, 0,comm_cart);
-	#ifdef VERBOSE
+	#ifdef DEBUG
 			if(!myrank) {
 				printf("t%d: Gather: gMAX=[%2.2f %2.2f %2.2f %2.2f]\n",
 					l,gMaxEach[0],gMaxEach[1],gMaxEach[2],gMaxEach[3]);
+				printf("P%d,t%d: gMax = %4.4f\n",myrank,l,gMax);
+				fflush(stdout);
 			}
-			printf("P%d,t%d: gMax = %4.4f\n",myrank,l,gMax);
-			fflush(stdout);
 	#endif
 			if( gMax < pulseThresh ){
 				/* issue pulse if global max mag has degraded below 
@@ -357,23 +352,23 @@ int main(int argc, char* argv[]) {
 				/*  rotate pulses around the perimeter*/
 				pulseSide = pulseCount % 4;
 				if(pulseSide == 0){			/* west */
-						pulseX = dom.xmid-16;
-					   	pulseY = dom.ymid-16;
+						pulseX = dom.xmin+1; //dom.xmid-16;
+					   	pulseY = dom.ymid+1; //dom.ymid-16;
 				}else if(pulseSide == 1){	/* north */
-						pulseX = dom.xmid-16; 
-						pulseY = dom.ymid+16;
+						pulseX = dom.xmid+1; //dom.xmid-16; 
+						pulseY = dom.ymax-1; //dom.ymid+16;
 				}else if(pulseSide == 2){	/* east */
-						pulseX = dom.xmid+16; 
-						pulseY = dom.ymid+16;
+						pulseX = dom.xmax-1; //dom.xmid+16; 
+						pulseY = dom.ymid+1; //dom.ymid+16;
 				}else if(pulseSide == 3){	/* south */
-						pulseX = dom.xmid+16; 
-						pulseY = dom.ymid-16;
+						pulseX = dom.xmid+1;//dom.xmid+16; 
+						pulseY = dom.ymin+1; //dom.ymid-16;
 				}
 	#else
 				/* default is static pulse, off center */
 				pulseSide=0;
 				pulseX = 1; 
-				pulseY = dom.ymid;
+				pulseY = dom.ymid-1;
 	#endif /* ROTATEPULSE */
 	#ifdef DEBUG
 				/* root issues msg */
@@ -382,8 +377,7 @@ int main(int argc, char* argv[]) {
 					fflush(stdout);
 				}
 	#endif
-				if( ((pulseX >= mydom.xmin) && (pulseX <= mydom.xmax)) && 
-				   ((pulseY >= mydom.ymin) && (pulseY <= mydom.ymax) ) ){
+				if( isMyPulse(mydom, pulseX, pulseY) ){
 					/* issue only if pulse loc is in your domain */
 	#ifdef DEBUG
 					printf("==>P%d,t%d: pulse(%d,%d) is mine\n",
@@ -399,139 +393,125 @@ int main(int argc, char* argv[]) {
 					u1[x][y] = 0;
 					u1[x][y] = pulse;
 
-					lastPulseX = pulseX;
-					lastPulseY = pulseY;
-					lastPulseT = l;
 	#ifdef DEBUG
 					printf("==>P%d,t%d: pulse(%u)@(%d,%d,%4.2f), old=%4.2f, new=%4.2f\n"
 							,myrank,l,pulseCount+1,pulseX,pulseY,pulse,
 							dTemp, u1[x][y]);
 	#endif
 				}
-//				else{/* not your pulse! */
-//	#ifdef DEBUG
-//					printf("==>P%d,t%d: not my pulse\n",myrank,l);
-//	#endif
-//				}
+				else{/* not your pulse! */
+	#ifdef VERBOSE
+					printf("==>P%d,t%d: not my pulse\n",myrank,l);
+	#endif
+				}
 				pulseCount++;
 				pulseTimes[l] = 1;
+				lastPulseX = pulseX;
+				lastPulseY = pulseY;
+				lastPulseT = l;
 			}
-//			else{
-//	#ifdef DEBUG
-//				printf("P%d,t%d-2: gMax = %4.4f --> no Pulse\n", myrank,l, gMax);
-//	#endif
-//			}	
+			else{
+	#ifdef VERBOSE
+				printf("P%d,t%d-2: gMax = %4.4f --> no Pulse\n", myrank,l, gMax);
+	#endif
+			}	
 		}
 #endif		/* ISSUEPULSE */
 
 #ifdef EXCHANGEDATA
-			/* communicate array updates to other nodes 
-			 * shift each domain's boundaries to its neighbor */
-			/* NORTH-SOUTH border exchange first */
-			if(nbors[NORTH] > -1){/* you have a north-neighbor to send to*/
-				tag = NORTH;
-				dest = nbors[NORTH];
-				/* gather the data to send */
-				for(i = 1; i <= chunk_size; ++i){
-					myBorder[i-1] = u1[i][chunk_size];
-				}
-	#ifdef VERBOSE
-				dTemp = rowMax(myBorder,chunk_size);
-				if(dTemp > 0.0){
-					printf("P%d,t%d: myMax = %2.2f\n",
-							myrank,l, dTemp);
-					/* printRow(myBorder, chunk_size);*/
-				}
-	#endif		
-				/* verified that good data is in myBorder here */
-				ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE, 
-						dest, tag, comm_cart, &request);
-				if(ierr != 0) printf("P%d,t%d: ierr = %d\n",myrank,l,ierr);
+		/* communicate array updates to other nodes 
+		 * shift each domain's boundaries to its neighbor */
+		/* NORTH-SOUTH border exchange first */
+		if(nbors[NORTH] > -1){/* you have a north-neighbor to send to*/
+			tag = NORTH;
+			dest = nbors[NORTH];
+			/* gather the data to send */
+			for(i = 1; i <= chunk_size; ++i){
+				myBorder[i-1] = u1[i][chunk_size];
 			}
-			if(nbors[SOUTH] > -1){/* you have a south neighbor to rcv from */
-				tag = NORTH;
-				source = nbors[SOUTH];
-				ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE,
-					   	source, tag, comm_cart, &status);
-	#ifdef VERBOSE
-				dTemp = rowMax(theirBorder,chunk_size);
-				if( dTemp > 0.00 ){
-					printf("P%d,t%d: P%d-BorderMax = %2.2f\n",
-							myrank, l,nbors[SOUTH], dTemp);
-					//printRow(theirBorder, chunk_size);
-				}
-	#endif
-				/* verified that copy-into mydomain works */
-				for(i = 1; i < chunk_size; ++i){/* put their border in my ghost row */
-					ARRVAL(u1, i, 0) = theirBorder[i-1];
-				}
+			/* verified that good data is in myBorder here */
+			ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE, 
+					dest, tag, comm_cart, &request);
+			if(ierr != 0) printf("P%d,t%d: ierr = %d\n",myrank,l,ierr);
+		}
+		if(nbors[SOUTH] > -1){/* you have a south neighbor to rcv from */
+			tag = NORTH;
+			source = nbors[SOUTH];
+			ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE,
+				   	source, tag, comm_cart, &status);
+			/* verified that copy-into mydomain works */
+			for(i = 1; i <= chunk_size; ++i){/* put their border in my ghost row */
+				ARRVAL(u1, i, 0) = theirBorder[i-1];
 			}
-			if(nbors[SOUTH] > -1){
-				/* you have a south neighbor to send data to */
-				tag = SOUTH;
-				dest = nbors[SOUTH];
-				/* gather the data to send */
-				for(i = 1; i < chunk_size; ++i){
-					myBorder[i-1] = ARRVAL(u1, i, 0); 
-				}
-				ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE, 
-						dest, tag, comm_cart, &request);
+			
+			
+			/* you have a south neighbor to send data to */
+			tag = SOUTH;
+			dest = nbors[SOUTH];
+			/* gather the data to send */
+			for(i = 1; i <= chunk_size; ++i){
+				myBorder[i-1] = u1[i][1];//ARRVAL(u1, i, 1); 
 			}
-			if(nbors[NORTH] > -1){/* you have a north-neighbor to receive from */
-				tag = SOUTH;
-				source = nbors[NORTH];
-				ierr = MPI_Recv (theirBorder, chunk_size, MPI_DOUBLE,
-					   	source, tag, comm_cart, &status);
-				for(i = 1;i < chunk_size; ++i){/* put their border in my ghost row */
-					ARRVAL(u1, i, chunk_size+1) = theirBorder[i-1];
-				}
+			ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE, 
+					dest, tag, comm_cart, &request);
+		}
+		if(nbors[NORTH] > -1){/* you have a north-neighbor to receive from */
+			tag = SOUTH;
+			source = nbors[NORTH];
+			ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE,
+				   	source, tag, comm_cart, &status);
+			for(i = 1;i <= chunk_size; ++i){/* put their border in my ghost row */
+				ARRVAL(u1, i, chunk_size+1) = theirBorder[i-1];
 			}
+		}
 	
-			/* EAST-WEST border exchange second */
-			if(nbors[EAST] > -1){/* you have a EAST-neighbor to send to*/
-				tag = EAST;
-				dest = nbors[EAST];
-				/* gather the data to send */
-				for(i = 1; i < chunk_size; ++i){
-					myBorder[i-1] = ARRVAL(u1, chunk_size, i); 
-				}
-				ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE,
-					   	dest, tag, comm_cart, &request);
+		
+		
+		/* EAST-WEST border exchange second */
+		if(nbors[EAST] > -1){/* you have a EAST-neighbor to send to*/
+			tag = EAST;
+			dest = nbors[EAST];
+			/* gather the data to send */
+			for(i = 1; i <= chunk_size; ++i){
+				myBorder[i-1] = ARRVAL(u1, chunk_size, i); 
 			}
-			if(nbors[WEST] > -1){/* you have a WEST neighbor to rcv from */
-				tag = EAST;
-				source = nbors[WEST];
-				ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE, 
-						source, tag, comm_cart, &status);
-				for(i = 1;i < chunk_size; ++i){/* put their border in my ghost row */
-					ARRVAL(u1, 0, i) = theirBorder[i-1];
-					/* put their border in my ghost row */
-				}
+			ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE,
+				   	dest, tag, comm_cart, &request);
+		}
+		if(nbors[WEST] > -1){/* you have a WEST neighbor to rcv from */
+			tag = EAST;
+			source = nbors[WEST];
+			ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE, 
+					source, tag, comm_cart, &status);
+			for(i = 1;i <= chunk_size; ++i){/* put their border in my ghost row */
+				ARRVAL(u1, 0, i) = theirBorder[i-1];
+				/* put their border in my ghost row */
+			}
 
-				/* you have a WEST neighbor to send data to */
-				tag = WEST;
-				dest = nbors[WEST];
-				/* gather the data to send */
-				for(i = 1; i < chunk_size; ++i){
-					myBorder[i-1] = ARRVAL(u1, 1, i); 
-				}
-				ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE,
-					   	dest, tag, comm_cart, &request);
+			/* you have a WEST neighbor to send data to */
+			tag = WEST;
+			dest = nbors[WEST];
+			/* gather the data to send */
+			for(i = 1; i <= chunk_size; ++i){
+				myBorder[i-1] = ARRVAL(u1, 1, i); 
 			}
-			if(nbors[EAST] > -1){/* you have a EAST-neighbor to receive from */
-				tag = WEST;
-				source = nbors[EAST];
-				ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE, 
-						source, tag, comm_cart, &status);
-				for(i = 1;i < chunk_size; ++i){
-					ARRVAL(u1, mydom.size-1, i) = theirBorder[i-1];/* put their border in my ghost row */
-					/* put their border in my ghost row */
-				}
+			ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE,
+				   	dest, tag, comm_cart, &request);
+		}
+		if(nbors[EAST] > -1){/* you have a EAST-neighbor to receive from */
+			tag = WEST;
+			source = nbors[EAST];
+			ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE, 
+					source, tag, comm_cart, &status);
+			for(i = 1;i < chunk_size; ++i){
+				ARRVAL(u1, chunk_size+1, i) = theirBorder[i-1];/* put their border in my ghost row */
+				/* put their border in my ghost row */
 			}
+		}
 
 #endif /* EXCHANGEDATA */
 #ifdef UPDATEDOMAIN
-/* #pragma omp for */
+#pragma omp parallel for
 		/* calculate wave intensity @ each location in the domain */
 		for(i=1; i <= chunk_size; i++){
 			for(j=1; j <= chunk_size; j++){
@@ -543,6 +523,45 @@ int main(int argc, char* argv[]) {
 			}
 		}
 #endif /* UPDATEDOMAIN */
+		MPI_Barrier(comm_cart);
+#ifdef ZEROPULSES
+		if(lastPulseT == l){
+	#ifdef DEBUG
+			/* root issues msg */
+			if( myrank == 0){
+				printf("t%d:Pulse to clear @ (%d, %d)\n",l,
+						lastPulseX, lastPulseY);
+				fflush(stdout);
+			}
+	#endif
+			if( isMyPulse(mydom, pulseX, pulseY) ){
+				/* Kill pulse only if pulse loc is in your domain */
+	#ifdef DEBUG
+				printf("==>P%d,t%d: kill(%d,%d) is mine\n",
+						myrank,l, lastPulseX, lastPulseY);
+				fflush(stdout);
+	#endif
+				/* Kills need to be adjusted to the local domain */
+				x = lastPulseX - mydom.xmin;
+				y = lastPulseY - mydom.ymin;
+
+				dTemp = u1[x][y];/* preserve original value */
+				u1[x][y] = 0;
+	#ifdef DEBUG
+				printf("==>P%d,t%d: kill(%u)@(%d,%d,%4.2f), old=%4.2f, new=%4.2f\n"
+					,myrank,l,pulseCount,lastPulseX,lastPulseY,0.0,
+					dTemp, u1[x][y]);
+	#endif
+			}
+			else{/* not your kill! */
+	#ifdef VERBOSE
+				printf("==>P%d,t%d: not my kill\n",myrank,l);
+	#endif
+			}
+		
+		}
+#endif /* ZEROPULSES */
+	
 		/* rotate the u-arrays so that u1/u(l) becomes u2/u(l+1) and 
 		 * u0/u(l-1) becomes u1/u(l) */
 		utemp = u1;
@@ -550,6 +569,9 @@ int main(int argc, char* argv[]) {
 		u2 = u0;
 		u0 = utemp;
 		MPI_Barrier(comm_cart);/* barrier at the end of each iteration to keep everyone in synch */
+#ifdef DEBUG
+		if(!myrank) printf("\n");
+#endif
 	}/* end for l=0:tmax */
 
 #ifdef SENDTOMASTER
@@ -868,22 +890,28 @@ void printRow(double * array, int length){
 	printf(" ]\n");
 }
 
-	/* u(l-1,i,j)       = u0
-     * u(l-1,i+1,j)     = u0e     (east)
-     * u(l-1,i,j+1)     = u0n     (north)
-     * u(l-1,i-1,j)     = u0w     (west)
-     * u(l-1,i,j-1)     = u0s     (south)
-     *
-     * u(l,i,j)         = u1
-     * u(l,i+1,j)       = u1e     (east)
-     * u(l,i,j+1)       = u1n     (north)
-     * u(l,i-1,j)       = u1w     (west)
-     * u(l,i,j-1)       = u1s     (south)
-     * 
-     * u(l+1,i,j)       = u2        (solving for this)
-     * u(l+1,i+1,j)     = u2e     (east)
-     * u(l+1,i,j+1)     = u2n     (north)
-     * u(l+1,i-1,j)     = u2w     (west)
-     * u(l+1,i,j-1)     = u2s     (south)
-     */
+int	isMyPulse(domain_t mydom, int x, int y){
+	return( (x >= mydom.xmin) & (x <= mydom.xmax) & 
+		   (y >= mydom.ymin) & (y <= mydom.ymax) );	
+}
+	
+
+/* u(l-1,i,j)       = u0
+ * u(l-1,i+1,j)     = u0e     (east)
+ * u(l-1,i,j+1)     = u0n     (north)
+ * u(l-1,i-1,j)     = u0w     (west)
+ * u(l-1,i,j-1)     = u0s     (south)
+ *
+ * u(l,i,j)         = u1
+ * u(l,i+1,j)       = u1e     (east)
+ * u(l,i,j+1)       = u1n     (north)
+ * u(l,i-1,j)       = u1w     (west)
+ * u(l,i,j-1)       = u1s     (south)
+ * 
+ * u(l+1,i,j)       = u2        (solving for this)
+ * u(l+1,i+1,j)     = u2e     (east)
+ * u(l+1,i,j+1)     = u2n     (north)
+ * u(l+1,i-1,j)     = u2w     (west)
+ * u(l+1,i,j-1)     = u2s     (south)
+ */
  
