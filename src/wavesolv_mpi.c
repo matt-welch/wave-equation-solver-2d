@@ -25,7 +25,7 @@
 
 /* defines controlling which parts of the program are compiled */
 #define ISSUEPULSE 
-//#define ROTATEPULSE
+#define ROTATEPULSE
 #define EXCHANGEDATA
 #define UPDATEDOMAIN
 #define SENDTOMASTER 
@@ -312,92 +312,96 @@ int main(int argc, char* argv[]) {
 	if(!myrank) printf("Beginning time series\n"); fflush(stdout);
 #endif
 	MPI_Barrier(comm_cart);
-	for(l = 0; l < tmax; ++l){ 
-		/*
-		 * determine maximum of each sub-domain and AllReduce to everyone
-		 * use findMaxMag on each subdomain
-		*/
-		myMaxMag = findMaxMag(u1,chunk_size);
-#ifdef VERBOSE
-		printf("P%d(t%d): max=%2.2f\n",myrank,l,myMaxMag);
-		fflush(stdout);
-#endif
-		MPI_Gather(&myMaxMag, 1, MPI_DOUBLE, 
-				gMaxEach, numprocs, MPI_DOUBLE, 
-				0, comm_cart );	
-	
-		gMax = rowMax(gMaxEach, numprocs);	
-#ifdef VERBOSE
-		if(!myrank) {
-			printf("t%d: Gather: gMAX=[%2.2f %2.2f %2.2f %2.2f]\n",
-				l,gMaxEach[0],gMaxEach[1],gMaxEach[2],gMaxEach[3]); 
-			printf("gMax=%4.2f\n", gMax);
-		}
-#endif
-		if( l > 1 && gMax < pulseThresh ){/* issue pulse if global max mag 
-		*	has degraded below threshhold of initial pulse magnitude */
-			
-			/* figure out where the pulse is going to be*/
-		
+	for(l = 0; l < tmax; ++l){
 #ifdef ISSUEPULSE
+		if(l > 1){/* don't bother with pulses until time has elapsed */
+			/* determine max of each sub-domain and Gather to root */
+			myMaxMag = findMaxMag(u1,chunk_size);
+	#ifdef VERBOSE
+			printf("P%d(t%d): max=%2.2f\n",myrank,l,myMaxMag);
+			fflush(stdout);
+	#endif
+			gMax = pulse;/* make sure gMax is not old */
+			/* Gather only when necessary */
+			MPI_Gather(&myMaxMag, 1, MPI_DOUBLE, 
+					gMaxEach, numprocs, MPI_DOUBLE, 0, comm_cart );	
+			gMax = rowMax(gMaxEach, numprocs);	
+			
+	#ifdef DEBUG
+			if(!myrank) {
+				printf("t%d: Gather: gMAX=[%2.2f %2.2f %2.2f %2.2f]\n",
+					l,gMaxEach[0],gMaxEach[1],gMaxEach[2],gMaxEach[3]); 
+				printf("gMax=%4.2f\n", gMax);
+			}
+	#endif
+			MPI_Barrier(comm_cart);
+			if( gMax < pulseThresh ){
+				/* issue pulse if global max mag has degraded below 
+				 * threshhold of initial pulse magnitude */
+				
+				/* figure out where the pulse is going to be*/
 	#ifdef ROTATEPULSE
-			/*  TODO rotate pulses around the perimeter*/
-			pulseSide = pulseCount % 4;
-			if(pulseSide == 0){			/* west */
-					pulseX = xmid-16; pulseY=ymid-16;
-			}else if(pulseSide == 1){	/* north */
-					pulseX = xmid-16; pulseY=ymid+16;
-			}else if(pulseSide == 2){	/* east */
-					pulseX = xmid+16; pulseY=ymid+16;
-			}else if(pulseSide == 3){	/* south */
-					pulseX = xmid+16; pulseY=ymid-16;
-			}
+				/*  TODO rotate pulses around the perimeter*/
+				pulseSide = pulseCount % 4;
+				if(pulseSide == 0){			/* west */
+						pulseX = xmid-16; pulseY=ymid-16;
+				}else if(pulseSide == 1){	/* north */
+						pulseX = xmid-16; pulseY=ymid+16;
+				}else if(pulseSide == 2){	/* east */
+						pulseX = xmid+16; pulseY=ymid+16;
+				}else if(pulseSide == 3){	/* south */
+						pulseX = xmid+16; pulseY=ymid-16;
+				}
 	#else
-			/* default is static pulse, off center */
-			pulseSide=0;
-			pulseX = xmid - 16; 
-			pulseY = ymid - 16;
+				/* default is static pulse, off center */
+				pulseSide=0;
+				pulseX = 1; 
+				pulseY = ymid;
 	#endif /* ROTATEPULSE */
-#ifdef DEBUG
-			/* root issues msg */
-			if( myrank == 0){
-				printf("t%d:Pulse to issue @ (%d, %d)\n",l,pulseX, pulseY);
-				fflush(stdout);
-			}
-#endif
-			if(pulseX <= mydom.xmax && pulseX >= mydom.xmin && 
-			   pulseY >= mydom.ymin && pulseY <= mydom.ymax){
-				/* issue only if pulse loc is in your domain */
-#ifdef DEBUG
-				printf("\tP%d, pulse(%d,%d) is mine\n",
-						myrank, pulseX, pulseY);
-				fflush(stdout);
-#endif
-				/* narrow pulse */
-				/* pulses need to be adjusted to the local domain */
-				x = pulseX - mydom.xmin;
-				y = pulseY - mydom.ymin;
+	#ifdef DEBUG
+				/* root issues msg */
+				if( myrank == 0){
+					printf("t%d:Pulse to issue @ (%d, %d)\n",l,pulseX, pulseY);
+					fflush(stdout);
+				}
+	#endif
+				if( ((pulseX >= mydom.xmin) && (pulseX <= mydom.xmax)) && 
+				   ((pulseY >= mydom.ymin) && (pulseY <= mydom.ymax) ) ){
+					/* issue only if pulse loc is in your domain */
+	#ifdef DEBUG
+					printf("==>P%d,t%d: pulse(%d,%d) is mine\n",
+							myrank,l, pulseX, pulseY);
+					fflush(stdout);
+	#endif
+					/* narrow pulse */
+					/* pulses need to be adjusted to the local domain */
+					x = pulseX - mydom.xmin;
+					y = pulseY - mydom.ymin;
 
-				dTemp = u1[x][y];/* preserve original value */
-				u1[x][y] = 0;
-				u1[x][y] = pulse;
+					dTemp = u1[x][y];/* preserve original value */
+					u1[x][y] = 0;
+					u1[x][y] = pulse;
 
-				lastPulseX = pulseX;
-				lastPulseY = pulseY;
-				lastPulseT = l;
-#ifdef DEBUG
-				printf("\tP%d,t%d: pulse(%d)@(%d,%d,%4.2f), old=%4.2f, new=%4.2f\n"
-						,myrank,l,pulseCount+1,pulseX,pulseY,pulse,
-						dTemp, u1[x][y]);
-#endif
-			}
-			pulseCount++;
-			pulseTimes[l] = 1;
-		}	
-#endif	/* ISSUEPULSE */
+					lastPulseX = pulseX;
+					lastPulseY = pulseY;
+					lastPulseT = l;
+	#ifdef DEBUG
+					printf("==>P%d,t%d: pulse(%d)@(%d,%d,%4.2f), old=%4.2f, new=%4.2f\n"
+							,myrank,l,pulseCount+1,pulseX,pulseY,pulse,
+							dTemp, u1[x][y]);
+	#endif
+				}else{/* not your pulse! */
+	#ifdef DEBUG
+					printf("==>P%d,t%d: not my pulse\n",myrank,l);
+	#endif
+				}
+				pulseCount++;
+				pulseTimes[l] = 1;
+			}	
+		}
+#endif		/* ISSUEPULSE */
 
 #ifdef EXCHANGEDATA
-		/* TODO: exchange is not working */
 			/* communicate array updates to other nodes 
 			 * shift each domain's boundaries to its neighbor */
 			/* NORTH-SOUTH border exchange first */
@@ -407,14 +411,14 @@ int main(int argc, char* argv[]) {
 				for(i = 1; i <= chunk_size; ++i){
 					myBorder[i-1] = u1[i][chunk_size];
 				}
-#ifdef VERBOSE
+	#ifdef VERBOSE
 				dTemp = rowMax(myBorder,chunk_size);
 				if(dTemp > 0.0){
 					printf("P%d,t%d: myMax = %2.2f\n",
 							myrank,l, dTemp);
 					/* printRow(myBorder, chunk_size);*/
 				}
-#endif		
+	#endif		
 				/* verified that good data is in myBorder here */
 				ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE, 
 						nbors[NORTH], tag, comm_cart, &request);
@@ -425,14 +429,14 @@ int main(int argc, char* argv[]) {
 				tag = NORTH;
 				ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE,
 					   	nbors[SOUTH], tag, comm_cart, &status);
-#ifdef DEBUG
+	#ifdef DEBUG
 				dTemp = rowMax(theirBorder,chunk_size);
 				if( dTemp > 0.00 ){
 					printf("P%d,t%d: P%d-BorderMax = %2.2f\n",
 							myrank, l,nbors[SOUTH], dTemp);
-					printRow(theirBorder, chunk_size);
+					//printRow(theirBorder, chunk_size);
 				}
-#endif
+	#endif
 				/* verified that copy-into mydomain works */
 				for(i = 1; i < chunk_size; ++i){/* put their border in my ghost row */
 					ARRVAL(u1, i, 0) = theirBorder[i-1];
@@ -496,8 +500,8 @@ int main(int argc, char* argv[]) {
 #ifdef UPDATEDOMAIN
 /* #pragma omp for */
 		/* calculate wave intensity @ each location in the domain */
-		for(i=1; i <= chunk_size; ++i){
-			for(j=1; j <= chunk_size; ++j){
+		for(i=1; i <= chunk_size; i++){
+			for(j=1; j <= chunk_size; j++){
 				dTemp = u1[i][j];
 				ARRVAL(u2, i, j) = getNextValue(ARRVAL(u1, i, j), 
 					ARRVAL(u0, i, j),	ARRVAL(u1, i+1, j), 
@@ -523,10 +527,10 @@ int main(int argc, char* argv[]) {
 
 	if(myrank == 0){/* only root node enters here */
 	/* allocate a matrix to hold the final update */
-#ifdef VERBOSE
+	#ifdef VERBOSE
 		printf("End of time, collect and display data\n");
 		printf("P%d allocating master array, Uall\n", myrank);	
-#endif	
+	#endif	
 		numBytesAll    = domSize * domSize * sizeof(*Ualldata );
 		numBytesPerRow = domSize * sizeof(*Uall);
 		Ualldata = malloc(numBytesAll);
@@ -570,24 +574,24 @@ int main(int argc, char* argv[]) {
 
 		/* store the subdomains in the master matrix */
 		for(source = 1; source < numprocs; source++){
-#ifdef VERBOSE
+	#ifdef VERBOSE
 			printf("P%d, receiving %d doubles from P%d\n", myrank, numElements, source);
 			fflush(stdout);
-#endif
+	#endif
 			ierr = MPI_Recv(theirDomainData, numElements, MPI_DOUBLE, source, tag, comm_cart, &status);
-#ifdef SPOOFTHEIRDOMAIN
+	#ifdef SPOOFTHEIRDOMAIN
 			/* spoofs theirDomain to look like a diamond plane */
 			for (i = 0; i < chunk_size; i++) {
 				for (j = 0; j < chunk_size; j++) {
 					ARRVAL(theirDomain, i, j) = (double)i + (double)j;
 				}
 			}
-#endif /* SPOOFTHEIRDOMAIN */
+	#endif /* SPOOFTHEIRDOMAIN */
 
-#ifdef VERBOSE
+	#ifdef VERBOSE
 			printf("P%d: received data from P%d, source=%d, tag=%d\n", myrank, source, status.MPI_SOURCE, status.MPI_TAG);
 			fflush(stdout);
-#endif
+	#endif
 			/* get coordinates of next receive */
 			MPI_Cart_coords(comm_cart, source, ndims, nborCoords);
 	
@@ -606,28 +610,28 @@ int main(int argc, char* argv[]) {
 				
 			}/* end for(i=1:chunk_size) */
 
-#ifdef VERBOSE
+	#ifdef VERBOSE
 			printf("P%d copied data from P%d\n", myrank, source);
 			fflush(stdout);
-#endif
+	#endif
 		}/* end for(source = 1:numprocs) */
 	}else { 
 		/* myrank != 0 */
 		for (i = 1; i < numprocs; i++) {
 			if (myrank == i) {
-#ifdef VERBOSE
+	#ifdef VERBOSE
 				printf("P%d: sending data\n",myrank);
 				fflush(stdout);
-#endif
+	#endif
 		/* u1[0] is the pointer to the first element in the data array
 		 * if just u1 is used, erroneous, HUGE values are sent */
 				 /* non-blocking send */
 				MPI_Isend(u1[0], numElements, MPI_DOUBLE,
 					   	0, tag, comm_cart, &request);
-#ifdef VERBOSE
+	#ifdef VERBOSE
 				printf("P%d: SENT %d doubles to master...\n",myrank, numElements);
 				fflush(stdout);
-#endif
+	#endif
 			}
 		}
 	}
@@ -639,15 +643,14 @@ int main(int argc, char* argv[]) {
 #ifdef OUTPUT /* verified to work.  Not likely to have bugs */
 	/* print the last iteration to a file */
 	if(myrank == 0){
-#ifdef VERBOSE
+	#ifdef VERBOSE
 		printf("p%d Writing to output.txt....\n",myrank);
-#endif
+	#endif
 		filePrintMatrix("output.txt",Uall,domSize);
-
-#ifdef VERBOSE
-	 printf("P%d: closing file\n",myrank);
-	 fflush(stdout);
-#endif
+	#ifdef VERBOSE
+		printf("P%d: closing file\n",myrank);
+		fflush(stdout);
+	#endif
 	}
 #endif /* OUTPUT */
 
@@ -683,7 +686,6 @@ int main(int argc, char* argv[]) {
 		}
 		printf("]\n");
 	}
-	
 	MPI_Barrier(comm_cart);
 		
 	/* finalize MPI */
@@ -738,7 +740,7 @@ double getNextValue(double u1, double u0,
 	value = 2.0*u1 - u0 + r*r*(u1e + u1w + u1n + u1s - 4.0*u1) ;
 #ifdef VERBOSE
 	if(value > u1){
-		printf("\tu1=%2.2f,u0=%2.2f\n\tE=%2.2f,S=%2.2f,W=%2.2f,N=%2.2f\n\tr=%1.4f\tval=%2.2f\n",
+		printf("u1=%2.2f,u0=%2.2f\n\tE=%2.2f,S=%2.2f,W=%2.2f,N=%2.2f\n\tr=%1.4f\tval=%2.2f\n",
 			u1,u0,u1e,u1s,u1w,u1n,r,value);
 		
 	}
