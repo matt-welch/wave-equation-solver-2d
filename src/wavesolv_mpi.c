@@ -323,18 +323,28 @@ int main(int argc, char* argv[]) {
 	#endif
 			gMax = pulse;/* make sure gMax is not old */
 			/* Gather only when necessary */
-			MPI_Gather(&myMaxMag, 1, MPI_DOUBLE, 
-					gMaxEach, numprocs, MPI_DOUBLE, 0, comm_cart );	
+			/* MPI_Gather(&myMaxMag, 1, MPI_DOUBLE, 
+					gMaxEach, numprocs, MPI_DOUBLE, 0, comm_cart );	*/
+/* int MPI_Allgather(void *sendbuf, int  sendcount,
+ *		MPI_Datatype sendtype, void *recvbuf, int recvcount,
+ *		MPI_Datatype recvtype, MPI_Comm comm) */
+			MPI_Allgather(&myMaxMag, 1, MPI_DOUBLE, gMaxEach, 
+					1, MPI_DOUBLE, comm_cart);
 			gMax = rowMax(gMaxEach, numprocs);	
-			
-	#ifdef DEBUG
+			MPI_Barrier(comm_cart);
+	/* int MPI_Scatter(void *sendbuf, int sendcount, MPI_Datatype
+	 * sendtype,
+	 *     void *recvbuf, int recvcount, MPI_Datatype recvtype, int
+	 *     root,MPI_Comm comm) */
+//			MPI_Scatter(&gMax, 1, MPI_DOUBLE, &gMax, 1, MPI_DOUBLE, 0,comm_cart);
+	#ifdef VERBOSE
 			if(!myrank) {
 				printf("t%d: Gather: gMAX=[%2.2f %2.2f %2.2f %2.2f]\n",
-					l,gMaxEach[0],gMaxEach[1],gMaxEach[2],gMaxEach[3]); 
-				printf("gMax=%4.2f\n", gMax);
+					l,gMaxEach[0],gMaxEach[1],gMaxEach[2],gMaxEach[3]);
 			}
+			printf("P%d,t%d: gMax = %4.4f\n",myrank,l,gMax);
+			fflush(stdout);
 	#endif
-			MPI_Barrier(comm_cart);
 			if( gMax < pulseThresh ){
 				/* issue pulse if global max mag has degraded below 
 				 * threshhold of initial pulse magnitude */
@@ -390,14 +400,20 @@ int main(int argc, char* argv[]) {
 							,myrank,l,pulseCount+1,pulseX,pulseY,pulse,
 							dTemp, u1[x][y]);
 	#endif
-				}else{/* not your pulse! */
-	#ifdef DEBUG
-					printf("==>P%d,t%d: not my pulse\n",myrank,l);
-	#endif
 				}
+//				else{/* not your pulse! */
+//	#ifdef DEBUG
+//					printf("==>P%d,t%d: not my pulse\n",myrank,l);
+//	#endif
+//				}
 				pulseCount++;
 				pulseTimes[l] = 1;
-			}	
+			}
+//			else{
+//	#ifdef DEBUG
+//				printf("P%d,t%d-2: gMax = %4.4f --> no Pulse\n", myrank,l, gMax);
+//	#endif
+//			}	
 		}
 #endif		/* ISSUEPULSE */
 
@@ -429,7 +445,7 @@ int main(int argc, char* argv[]) {
 				tag = NORTH;
 				ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE,
 					   	nbors[SOUTH], tag, comm_cart, &status);
-	#ifdef DEBUG
+	#ifdef VERBOSE
 				dTemp = rowMax(theirBorder,chunk_size);
 				if( dTemp > 0.00 ){
 					printf("P%d,t%d: P%d-BorderMax = %2.2f\n",
