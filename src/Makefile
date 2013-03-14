@@ -19,8 +19,13 @@ wavesolv_mpi: wavesolv_mpi.c
 	ctags --c-kinds=+defglmpstux *.c
 
 # compile mpi program with logging to use in JumpShot
-log: wavesolv_mpi.c
-	mpicc.openmpi wavesolv_mpi.c -o wavesolv_mpi $(CONFIG) $(PARCONFIG) -mpilog 
+log: wavesolv_mpi.o
+	mpicc.mpich2  wavesolv_mpi.o -o wavesolv_mpi -mpe=mpilog -lm
+# 	module load mvapich2/1.5-gnu
+#	mpicc wavesolv_mpi.o -o wavesolv_mpi -mpe=mpilog -lm
+
+wavesolv_mpi.o: wavesolv_mpi.c
+	mpicc.mpich2 wavesolv_mpi.c -o wavesolv_mpi $(CONFIG) $(PARCONFIG)
 
 wavesolv_serial: wavesolv
 
@@ -28,7 +33,7 @@ clean:
 	rm -f wavesolv wavesolv_mpi *.o core core.*
 
 tidy: clean
-	rm -f *.*~ *~
+	rm -f *.*~ *~ *.asv
 
 DEBUG_FLAGS = -g3 -ggdb -O0 -DDEBUG -Wall -pedantic -lm
 CONFIG		= -Wall -pedantic -lm
