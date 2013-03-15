@@ -118,9 +118,11 @@ int main(int argc, char* argv[]) {
     long seconds, useconds;
     double preciseTime;
 
+#ifdef CREATEANIMATION
 	char fname[20] = "output";
 	char ext[]=".txt";
-	
+#endif /* CREATEANIMATION */
+
     /* Get start time - executed by all nodes since no rank assigned yet*/
 	gettimeofday(&startTime, NULL);
     
@@ -354,6 +356,7 @@ int main(int argc, char* argv[]) {
 		if(!myrank) printf("\n");
 #endif
 #ifdef CREATEANIMATION
+		/* assumes fname <= 6 chars */
 		sprintf(fname+6, "%d",l+1);
 		strcat(fname, ext);
 #ifdef DEBUG

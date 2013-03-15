@@ -29,6 +29,7 @@
 #define EXCHANGEDATA
 #define UPDATEDOMAIN
 #define ZEROPULSES
+#define CREATEANIMATION
 #define SENDTOMASTER 
 #define OUTPUT
 #define FREEMEMORY
@@ -139,6 +140,12 @@ int main(int argc, char* argv[]) {
     struct timeval startTime, endTime;
     long seconds, useconds;
     double preciseTime;
+		
+#ifdef CREATEANIMATION
+	/* inefficient for everyone to initialize it, but no rank yet */
+	char fname[20] = "output";
+	char ext[]=".txt";
+#endif /* CREATEANIMATION */
 	
     /* Get start time - executed by all nodes since no rank assigned yet*/
 	gettimeofday(&startTime, NULL);
@@ -567,6 +574,18 @@ int main(int argc, char* argv[]) {
 		u1 = u2;
 		u2 = u0;
 		u0 = utemp;
+
+#ifdef CREATEANIMATION
+		if(myrank==0){/* assumes fname <= 6 chars */
+			sprintf(fname+6, "%d",l+1);
+			strcat(fname, ext);
+#ifdef DEBUG
+			printf("%s\n",fname);
+#endif
+			filePrintMatrix(fname,u1,dom.size);
+		}
+#endif /* CREATEANIMATION */
+
 		MPI_Barrier(comm_cart);/* barrier at the end of each iteration to keep everyone in synch */
 #ifdef DEBUG
 		if(!myrank) printf("\n");

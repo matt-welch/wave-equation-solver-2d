@@ -4,12 +4,13 @@ clear all
 path = '';
 gifname = 'wave.gif';
 plottype = 'mesh';
-dirlist = dir('output*.txt');
+prefix = 'output';
+dirlist = dir([prefix,'*.txt']);
 numframes = length(dirlist) - 2;
-load('output1.txt');
+load([prefix,'1.txt']);
 domSize = sqrt(length(output1));
 images = zeros(domSize,domSize,numframes); 
-imgseq = 1:20:numframes;
+imgseq = 1:2:numframes;
 
 for(j=imgseq)
     fname = ['output',num2str(j)];
