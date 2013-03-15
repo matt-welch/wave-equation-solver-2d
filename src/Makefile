@@ -9,10 +9,10 @@
 # * TERM:        Spring 2013
 # *******************************************************************************/
 #
-all: wavesolv_mpi wavesolv_serial
+all: wavesolv_mpi wavesolv
 
-wavesolv: wavesolv.c 
-	gcc wavesolv.c -o wavesolv $(CONFIG)
+wavesolv: wavesolv_serial.c 
+	gcc wavesolv_serial.c -o wavesolv $(CONFIG) -fopenmp
 
 wavesolv_mpi: wavesolv_mpi.c
 	mpicc wavesolv_mpi.c -o wavesolv_mpi $(CONFIG) $(PARCONFIG)
@@ -26,8 +26,6 @@ log: wavesolv_mpi.o
 
 wavesolv_mpi.o: wavesolv_mpi.c
 	mpicc.mpich2 wavesolv_mpi.c -o wavesolv_mpi $(CONFIG) $(PARCONFIG)
-
-wavesolv_serial: wavesolv
 
 clean:
 	rm -f wavesolv wavesolv_mpi *.o core core.*

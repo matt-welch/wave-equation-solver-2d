@@ -30,22 +30,31 @@
 #define OUTPUT
 //#define FREEMEMORY
 #define ZEROLASTPULSE
+/* global typedefs and data */
+/* typedef to hold coordinates */
+typedef struct domain{
+	int	xmin,xmid,xmax,ymin,ymid,ymax,size;
+}domain_t;
 
 /* define that controlls how arrays are accessed */
 #define ARRVAL(u,i,j)     u[(i)][(j)] 
 /* function prototypes */
+void	filePrintMatrix(char* fname, double ** array,int length);
 double	checkCFL(double dx, double dy, double dt);
 double	getNextValue(double u1, double u0, double u1e, double u1s, double u1w, double u1n, double r);
+double	rowMin(double * u, int rowLength); /* minimum */
+double	rowMax(double * u, int rowLength);
 double	findMaxMag(double** u, int domSize);
+void	print2DArray(double **array, int length);
+void	printRow(double * array, int length);
+int		isMyPulse(domain_t mydom, int x, int y);
 
 int main(int argc, char* argv[]) {
     /* declare variables */
-	/* MPI_Variables (to maintain code similarity */
 	int numprocs=1, myrank=0, chunk_size;
 	
-	/* declare t, x, y as shorts to index the domain */
     int x, y;
-	int dt, dx, dy; /* step size for t, x, y*/
+	double dt, dx, dy; /* step size for t, x, y*/
     int tmax, xmax, ymax, xmid, ymid, domSize, myDomSize;  
     
     /* u is the wave magnitude as an double for best accuracy 
@@ -65,19 +74,25 @@ int main(int argc, char* argv[]) {
 	unsigned int numBytesAll;
 	unsigned int numBytesPerRow;
 	unsigned int numElements;
+	double dTemp;
+	int		iTemp;
+
+
  
 	/* Pulse Height and cutoffs */
 	double pulse;				/* magnitude of pulses */
 	double pulseThresh;		/* magnitude at which new pulse happens */
 	double pulseThreshPct;	/* percentage of last pulse when next pulse happens*/
+	double  gMax;	/* maximum magnitude of the wave @ current time step for whole domain*/
 	double maxMag;				/* maximum magnitude of the wave @ current time step */
 	double myMaxMag;		/* max mag over my domain */
 	int pulseCount = 0;	/* the number of pulses emitted, track to compare to mesh plot */
 	char * pulseTimes;	/* the time steps at which pulses happened (for debugging) */
-	unsigned short pulseSide = 0;		/* the side where the pulse comes from 0-3*/
-	unsigned short lastPulseX = 0;	/* coordinates of the last pulse */
-	unsigned short lastPulseY = 0;
-	unsigned short lastPulseT = 0;	/* time value of the last pulse */
+	unsigned int pulseSide = 0;		/* the side where the pulse comes from 0-3*/
+	unsigned int lastPulseX = 0;	/* coordinates of the last pulse */
+	unsigned int lastPulseY = 0;
+	unsigned int lastPulseT = 0;	/* time value of the last pulse */
+	int pulseX, pulseY;
 
     /* c is the wave velocity - unused  
      * r is a coefficient in the wave equation where r = dt/dx' */
@@ -94,11 +109,6 @@ int main(int argc, char* argv[]) {
     long seconds, useconds;
     double preciseTime;
 	
-	/* file variables for output */
-#ifdef OUTPUT
-	FILE *fp;
-#endif
-
     /* Get start time */
     gettimeofday(&startTime, NULL);
     
@@ -106,7 +116,7 @@ int main(int argc, char* argv[]) {
 	if(argc > 1)
 		tmax = atoi(argv[1]);
 	else
-		tmax = 50;	
+		tmax = 100;	
 	domSize = xmax = ymax = 480 + 2; /* two greater than 480 for ghost rows*/ 
 	xmid = ymid = (domSize / 2) - 1; /* midpoint of the domain */
 	chunk_size = domSize - 2;

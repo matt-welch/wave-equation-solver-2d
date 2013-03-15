@@ -14,7 +14,6 @@
 # include <string.h> /* memset */
 # include <math.h>   
 # include <omp.h>
-# include <mpi.h>
 # include <time.h>
 # include <sys/time.h>
 #define NORTH 0
@@ -25,11 +24,10 @@
 
 /* defines controlling which parts of the program are compiled */
 #define ISSUEPULSE 
-#define ROTATEPULSE
-#define EXCHANGEDATA
+//#define ROTATEPULSE
 #define UPDATEDOMAIN
-#define ZEROPULSES
-#define SENDTOMASTER 
+//#define ZEROPULSES
+#define CREATEANIMATION
 #define OUTPUT
 #define FREEMEMORY
 
@@ -62,21 +60,9 @@ int main(int argc, char* argv[]) {
     /* declare variables */
 	
 	/* MPI Variables */	
-	MPI_Status status;
-	MPI_Comm comm_cart;
-	MPI_Request request;
-	const int ndims = 2;
-	int dims[2], period[2], reorder, chunk_size, ierr;
-	int numprocs, myrank, myCoords[2], nbors[4], nborCoords[2];
+	int dims[2], chunk_size;
+	int myrank=0;
 	
-	/* shift params */
-	int displ, source, dest, index;
-	
-	/* data send params */
-	double * myBorder;
-	double * theirBorder;
-	int tag;
-
 	/* declare t, x, y as ints to index the domain */
     int x, y;
 	double dt, dx, dy; /* step size for t, x, y*/
@@ -101,20 +87,12 @@ int main(int argc, char* argv[]) {
 	unsigned int numBytesPerRow;
 	unsigned int numElements;
 	double dTemp;
-	int		iTemp;
 
-	/* declare an array for the master to hold the entire domain */
-	double ** Uall;
-	double * Ualldata;
-	double ** theirDomain; 
-	double * theirDomainData;
- 
 	/* Pulse Height and cutoffs */
 	double pulse;				/* magnitude of pulses */
 	double pulseThresh;		/* magnitude at which new pulse happens */
 	double pulseThreshPct;	/* percentage of last pulse when next pulse happens*/
 	double  gMax;	/* maximum magnitude of the wave @ current time step for whole domain*/
-	double * gMaxEach;	/* array of maxima for each node */
 	double myMaxMag;		/* gMax for each node */
 	unsigned int pulseCount = 0;	/* the number of pulses emitted, track to compare to mesh plot */
 	char * pulseTimes;	/* the time steps at which pulses happened (for debugging) */
@@ -139,37 +117,14 @@ int main(int argc, char* argv[]) {
     struct timeval startTime, endTime;
     long seconds, useconds;
     double preciseTime;
+
+	char fname[20] = "output";
+	char ext[]=".txt";
 	
     /* Get start time - executed by all nodes since no rank assigned yet*/
 	gettimeofday(&startTime, NULL);
     
-	/* Initialize MPI */
-	MPI_Init( &argc,&argv);
-	MPI_Comm_rank( MPI_COMM_WORLD, &myrank);
-	MPI_Comm_size( MPI_COMM_WORLD, &numprocs);
-
-	/* figure out dimensions bases on numproc */
-	if(numprocs == 1 || numprocs == 4 || numprocs == 16 || numprocs == 256 ){
-		/* squares are easy to partition */
-		dims[0] = dims[1] = (int)sqrt(numprocs); /* square domain */
-		if(myrank==0) printf("NumProcs = %d, proc/side = %d\n", numprocs, dims[0]);
-	}else{
-		/* error out if a non-square numproc has be requested */
-		if(myrank==0) printf("Please only request a square number of processors (%d requested).\n",numprocs); 
-		MPI_Abort(MPI_COMM_WORLD, 1);
-		return 0;
-	}
-
-	/* Create Cartesian topology: acyclic in x & y  */
-	period[0] = period[1] = 0;
-	reorder = 0;
-	MPI_Cart_create(MPI_COMM_WORLD, ndims, dims, period, reorder, &comm_cart); 
-	
-	/* get coordinates within cartesian topology */
-	MPI_Cart_coords(comm_cart, myrank, ndims, myCoords);
-	
-	/* reset the rank to the cartesian communicator */
-	MPI_Cart_rank(comm_cart, myCoords, &myrank);
+	dims[0] = dims[1] = 1;
 
 	/* duration of simulation(steps), width, and height of domain */
 	if(argc > 1)
@@ -200,15 +155,10 @@ int main(int argc, char* argv[]) {
 	pulseThresh = pulse * pulseThreshPct;
 
 	/* calculate the x & y coordinates of the node's subdomain */
-	mydom.xmin =  chunk_size *  myCoords[0];
-	mydom.xmax = (chunk_size * (myCoords[0]+1)) - 1;
-	mydom.ymin =  chunk_size *  myCoords[1];
-	mydom.ymax = (chunk_size * (myCoords[1]+1)) - 1;
-
-#ifdef DEBUG
-	printf("P%d, myCoords[%d,%d], x[%d,%d], y[%d,%d]\n", myrank, myCoords[0], myCoords[1], mydom.xmin,mydom.xmax,mydom.ymin,mydom.ymax);
-	fflush(stdout);
-#endif
+	mydom.xmin =  1;// chunk_size *  myCoords[0];
+	mydom.xmax = mydom.size; //(chunk_size * (myCoords[0]+1)) - 1;
+	mydom.ymin =  1; //chunk_size *  myCoords[1];
+	mydom.ymax = mydom.size; //(chunk_size * (myCoords[1]+1)) - 1;
 
 	/* step sizes for t, x, & y*/
 	dt = 0.42; /* 42 */
@@ -262,50 +212,12 @@ int main(int argc, char* argv[]) {
 		Adata[i] = Bdata[i] = Cdata[i] = 0.0000; 
 	}
 
-	/* allocate memory for border rows */
-	numBytesPerRow = chunk_size * sizeof(double);
-	myBorder = malloc(numBytesPerRow);
-	if(myBorder == NULL) printf("Error: P%d: malloc failed for myBorder(%u B)\n", myrank, numBytesPerRow);
-	theirBorder = malloc(numBytesPerRow);
-	if(theirBorder == NULL) printf("Error: P%d: malloc failed for theirBorder(%u B)\n", myrank, numBytesPerRow);
-	for (i = 0; i < chunk_size; i++) {
-		myBorder[i] = theirBorder[i] = 0.0;	/* zero borders */
-	}
-	/* allocate memory for gMaxEach */
-	gMaxEach = malloc( numprocs * sizeof(double));
-	for (i = 0; i < numprocs; i++) {
-		gMaxEach[i] = 0.0;
-	}
-
-	/* use MPI_shift to determine the location of neighbor domain */
-	source = myrank;   /* calling process rank in 2D communicator */
-	
-	/* get north neighbor*/
-	index =  1;    /* shift along index 2/2 - Y */
-	displ =  1;    /* shift by +1 - +Y */
-	MPI_Cart_shift(comm_cart, index, displ, &source, &nbors[NORTH]);
-
-	/* get east neighbor*/
-	index =  0;    /* shift along index 1/2 - x */
-	displ =  1;    /* shift by +1 - +x */
-	MPI_Cart_shift(comm_cart, index, displ, &source, &nbors[EAST]);
-
-	/* get south neighbor*/
-	index =  1;    /* shift along index 2/2 - y */
-	displ =  -1;    /* shift by -1 - -y */
-	MPI_Cart_shift(comm_cart, index, displ, &source, &nbors[SOUTH]);
-		
-	/* get west neighbor */
-	index =  0;    /* shift along index 1/2 - x */
-	displ =  -1;    /* shift by -1 - -x */
-	MPI_Cart_shift(comm_cart, index, displ, &source, &nbors[WEST]);
 
 #ifdef VERBOSE
 	printf("P%d: myXmin(%d), myXmax(%d), myYmin(%d), myYmax(%d), chunk(%d)\n",myrank,mydom.xmin,mydom.xmax,mydom.ymin,mydom.ymax,chunk_size);
 #endif 
 	/* cycle sequence: 
 	 * determine if a pulse is going to occur, issue one
-	 * update all neighbors of activity in your domain
 	 * update your domain
 	 * */
 
@@ -316,32 +228,16 @@ int main(int argc, char* argv[]) {
 #ifdef DEBUG
 	if(!myrank) printf("Beginning time series\n"); fflush(stdout);
 #endif
-	MPI_Barrier(comm_cart);
 	for(l = 0; l < tmax; ++l){
 #ifdef ISSUEPULSE
 		if(l > 1){/* don't bother with pulses until time has elapsed */
 			/* determine max of each sub-domain and Gather to root */
 			myMaxMag = findMaxMag(u1,chunk_size);
-	#ifdef VERBOSE
+	#ifdef DEBUG
 			printf("P%d(t%d): max=%2.2f\n",myrank,l,myMaxMag);
 			fflush(stdout);
 	#endif
-			/* Gather only when necessary */
-/* int MPI_Allgather(void *sendbuf, int  sendcount,
- *		MPI_Datatype sendtype, void *recvbuf, int recvcount,
- *		MPI_Datatype recvtype, MPI_Comm comm) */
-			MPI_Allgather(&myMaxMag, 1, MPI_DOUBLE, gMaxEach, 
-					1, MPI_DOUBLE, comm_cart);
-			gMax = rowMax(gMaxEach, numprocs);	
-			MPI_Barrier(comm_cart);
-	#ifdef DEBUG
-			if(!myrank) {
-				printf("t%d: Gather: gMAX=[%2.2f %2.2f %2.2f %2.2f]\n",
-					l,gMaxEach[0],gMaxEach[1],gMaxEach[2],gMaxEach[3]);
-				printf("P%d,t%d: gMax = %4.4f\n",myrank,l,gMax);
-				fflush(stdout);
-			}
-	#endif
+			gMax = myMaxMag;
 			if( gMax < pulseThresh ){
 				/* issue pulse if global max mag has degraded below 
 				 * threshhold of initial pulse magnitude */
@@ -376,7 +272,7 @@ int main(int argc, char* argv[]) {
 					fflush(stdout);
 				}
 	#endif
-				if( isMyPulse(mydom, pulseX, pulseY) ){
+				if( 1 ){
 					/* issue only if pulse loc is in your domain */
 	#ifdef DEBUG
 					printf("==>P%d,t%d: pulse(%d,%d) is mine\n",
@@ -398,117 +294,15 @@ int main(int argc, char* argv[]) {
 							dTemp, u1[x][y]);
 	#endif
 				}
-				else{/* not your pulse! */
-	#ifdef VERBOSE
-					printf("==>P%d,t%d: not my pulse\n",myrank,l);
-	#endif
-				}
 				pulseCount++;
 				pulseTimes[l] = 1;
 				lastPulseX = pulseX;
 				lastPulseY = pulseY;
 				lastPulseT = l;
 			}
-			else{
-	#ifdef VERBOSE
-				printf("P%d,t%d-2: gMax = %4.4f --> no Pulse\n", myrank,l, gMax);
-	#endif
-			}	
 		}
 #endif		/* ISSUEPULSE */
 
-#ifdef EXCHANGEDATA
-		/* communicate array updates to other nodes 
-		 * shift each domain's boundaries to its neighbor */
-		/* NORTH-SOUTH border exchange first */
-		if(nbors[NORTH] > -1){/* you have a north-neighbor to send to*/
-			tag = NORTH;
-			dest = nbors[NORTH];
-			/* gather the data to send */
-			for(i = 1; i <= chunk_size; ++i){
-				myBorder[i-1] = u1[i][chunk_size];
-			}
-			/* verified that good data is in myBorder here */
-			ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE, 
-					dest, tag, comm_cart, &request);
-			if(ierr != 0) printf("P%d,t%d: ierr = %d\n",myrank,l,ierr);
-		}
-		if(nbors[SOUTH] > -1){/* you have a south neighbor to rcv from */
-			tag = NORTH;
-			source = nbors[SOUTH];
-			ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE,
-				   	source, tag, comm_cart, &status);
-			/* verified that copy-into mydomain works */
-			for(i = 1; i <= chunk_size; ++i){/* put their border in my ghost row */
-				ARRVAL(u1, i, 0) = theirBorder[i-1];
-			}
-			
-			
-			/* you have a south neighbor to send data to */
-			tag = SOUTH;
-			dest = nbors[SOUTH];
-			/* gather the data to send */
-			for(i = 1; i <= chunk_size; ++i){
-				myBorder[i-1] = u1[i][1];
-			}
-			ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE, 
-					dest, tag, comm_cart, &request);
-		}
-		if(nbors[NORTH] > -1){/* you have a north-neighbor to receive from */
-			tag = SOUTH;
-			source = nbors[NORTH];
-			ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE,
-				   	source, tag, comm_cart, &status);
-			for(i = 1;i <= chunk_size; ++i){/* put their border in my ghost row */
-				ARRVAL(u1, i, chunk_size+1) = theirBorder[i-1];
-			}
-		}
-	
-		
-		
-		/* EAST-WEST border exchange second */
-		if(nbors[EAST] > -1){/* you have a EAST-neighbor to send to*/
-			tag = EAST;
-			dest = nbors[EAST];
-			/* gather the data to send */
-			for(i = 1; i <= chunk_size; ++i){
-				myBorder[i-1] = ARRVAL(u1, chunk_size, i); 
-			}
-			ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE,
-				   	dest, tag, comm_cart, &request);
-		}
-		if(nbors[WEST] > -1){/* you have a WEST neighbor to rcv from */
-			tag = EAST;
-			source = nbors[WEST];
-			ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE, 
-					source, tag, comm_cart, &status);
-			for(i = 1;i <= chunk_size; ++i){/* put their border in my ghost row */
-				ARRVAL(u1, 0, i) = theirBorder[i-1];
-				/* put their border in my ghost row */
-			}
-
-			/* you have a WEST neighbor to send data to */
-			tag = WEST;
-			dest = nbors[WEST];
-			/* gather the data to send */
-			for(i = 1; i <= chunk_size; ++i){
-				myBorder[i-1] = ARRVAL(u1, 1, i); 
-			}
-			ierr = MPI_Isend(myBorder, chunk_size, MPI_DOUBLE,
-				   	dest, tag, comm_cart, &request);
-		}
-		if(nbors[EAST] > -1){/* you have a EAST-neighbor to receive from */
-			tag = WEST;
-			source = nbors[EAST];
-			ierr = MPI_Recv(theirBorder, chunk_size, MPI_DOUBLE, 
-					source, tag, comm_cart, &status);
-			for(i = 1;i < chunk_size; ++i){
-				ARRVAL(u1, chunk_size+1, i) = theirBorder[i-1];/* put their border in my ghost row */
-				/* put their border in my ghost row */
-			}
-		}
-
-#endif /* EXCHANGEDATA */
 #ifdef UPDATEDOMAIN
 #pragma omp parallel for schedule(static)
 		/* calculate wave intensity @ each location in the domain */
@@ -522,18 +316,14 @@ int main(int argc, char* argv[]) {
 			}
 		}
 #endif /* UPDATEDOMAIN */
-		MPI_Barrier(comm_cart);
 #ifdef ZEROPULSES
 		if(lastPulseT == l){
 	#ifdef DEBUG
 			/* root issues msg */
-			if( myrank == 0){
 				printf("t%d:Pulse to clear @ (%d, %d)\n",l,
 						lastPulseX, lastPulseY);
 				fflush(stdout);
-			}
 	#endif
-			if( isMyPulse(mydom, pulseX, pulseY) ){
 				/* Kill pulse only if pulse loc is in your domain */
 	#ifdef DEBUG
 				printf("==>P%d,t%d: kill(%d,%d) is mine\n",
@@ -551,13 +341,6 @@ int main(int argc, char* argv[]) {
 					,myrank,l,pulseCount,lastPulseX,lastPulseY,0.0,
 					dTemp, u1[x][y]);
 	#endif
-			}
-			else{/* not your kill! */
-	#ifdef VERBOSE
-				printf("==>P%d,t%d: not my kill\n",myrank,l);
-	#endif
-			}
-		
 		}
 #endif /* ZEROPULSES */
 	
@@ -567,133 +350,19 @@ int main(int argc, char* argv[]) {
 		u1 = u2;
 		u2 = u0;
 		u0 = utemp;
-		MPI_Barrier(comm_cart);/* barrier at the end of each iteration to keep everyone in synch */
-#ifdef DEBUG
+#ifdef VERBOSEDEBUG
 		if(!myrank) printf("\n");
 #endif
+#ifdef CREATEANIMATION
+		sprintf(fname+6, "%d",l+1);
+		strcat(fname, ext);
+#ifdef DEBUG
+		printf("%s\n",fname);
+#endif
+		filePrintMatrix(fname,u1,dom.size);
+#endif /* CREATEANIMATION */
 	}/* end for l=0:tmax */
 
-#ifdef SENDTOMASTER
-	/* Communicate domain contents to master */
-	MPI_Barrier(comm_cart);
-	numElements = mydom.size * mydom.size; 
-	tag = MASTER;
-
-	if(myrank == 0){/* only root node enters here */
-	/* allocate a matrix to hold the final update */
-	#ifdef VERBOSE
-		printf("End of time, collect and display data\n");
-		printf("P%d allocating master array, Uall\n", myrank);	
-	#endif	
-		numBytesAll    = dom.size * dom.size * sizeof(*Ualldata );
-		numBytesPerRow = dom.size * sizeof(*Uall);
-		Ualldata = malloc(numBytesAll);
-		if(Ualldata == NULL) printf("Error: P%d malloc failed for Ualldata(%u B)", myrank,  numBytesAll );
-		Uall = malloc(numBytesPerRow);
-		if(Uall == NULL) printf("Error: P%d: malloc failed for Uall(%u B)\n", myrank, numBytesPerRow );
-		for(i=0; i < dom.size; ++i){
-			Uall[i] = &Ualldata[i * dom.size];
-			/* zero the matrix */
-			for (j = 0; j < dom.size; j++) {
-				Ualldata[i+j] = 0.0;
-			}
-		}
-
-		/* allocate a small array to temporarily hold everyone else's final results */
-		numBytesAll = mydom.size * mydom.size * sizeof(* theirDomainData);
-		numBytesPerRow = mydom.size * sizeof(*theirDomain);
-		theirDomainData = malloc(numBytesAll);
-		if(theirDomainData == NULL) printf("Error: P%d malloc failed for theirDomainData(%u B)", myrank,  numBytesAll ); 
-		theirDomain = malloc(numBytesPerRow);
-		if(theirDomain == NULL) printf("Error: P%d malloc failed for theirDomain(%u B)", myrank,  numBytesPerRow );
-		for(i=0; i < mydom.size; i++){
-			theirDomain[i] = &theirDomainData[i*mydom.size];
-			for (j = 0; j < mydom.size; j++) {
-				theirDomainData[i+j] = 0.0;	
-			}
-		
-		}
-		/* end (create master matrix) */
-		
-		/* send final update to master */
-		/* root node receives */
-		/* copy root node's values into array */
-		for(i = 1; i < mydom.size; i++){
-			for (j = 1; j < mydom.size; j++) {
-				x = mydom.xmin + i -1;
-				y = mydom.ymin + j -1;
-				ARRVAL(Uall, x, y) = ARRVAL(u1, i, j);	
-			}
-		}/* end for(i=1:chunk_size) */
-
-		/* store the subdomains in the master matrix */
-		for(source = 1; source < numprocs; source++){
-	#ifdef VERBOSE
-			printf("P%d, receiving %d doubles from P%d\n", myrank, numElements, source);
-			fflush(stdout);
-	#endif
-			ierr = MPI_Recv(theirDomainData, numElements, MPI_DOUBLE, source, tag, comm_cart, &status);
-	#ifdef SPOOFTHEIRDOMAIN
-			/* spoofs theirDomain to look like a diamond plane */
-			for (i = 0; i < chunk_size; i++) {
-				for (j = 0; j < chunk_size; j++) {
-					ARRVAL(theirDomain, i, j) = (double)i + (double)j;
-				}
-			}
-	#endif /* SPOOFTHEIRDOMAIN */
-
-	#ifdef VERBOSE
-			printf("P%d: received data from P%d, source=%d, tag=%d\n", myrank, source, status.MPI_SOURCE, status.MPI_TAG);
-			fflush(stdout);
-	#endif
-			/* get coordinates of next receive */
-			MPI_Cart_coords(comm_cart, source, ndims, nborCoords);
-	
-			/* calculate the x & y coordinates of the node's subdomain */
-			mydom.xmin =  chunk_size * nborCoords[0];
-			mydom.ymin =  chunk_size * nborCoords[1];
-			/* copy data from theirDomain to complete domain */
-			for(i = 1; i < mydom.size; i++){
-				for (j = 1; j < mydom.size; j++) {
-					/* x and y are adjusted to point into the large domain */
-					x = mydom.xmin + i - 1;
-					y = mydom.ymin + j - 1;
-					dTemp = ARRVAL(theirDomain, i, j);
-					ARRVAL(Uall, x, y) = dTemp;	
-				}
-				
-			}/* end for(i=1:chunk_size) */
-
-	#ifdef VERBOSE
-			printf("P%d copied data from P%d\n", myrank, source);
-			fflush(stdout);
-	#endif
-		}/* end for(source = 1:numprocs) */
-	}else { 
-		/* myrank != 0 */
-		for (i = 1; i < numprocs; i++) {
-			if (myrank == i) {
-	#ifdef VERBOSE
-				printf("P%d: sending data\n",myrank);
-				fflush(stdout);
-	#endif
-		/* u1[0] is the pointer to the first element in the data array
-		 * if just u1 is used, erroneous, HUGE values are sent */
-				 /* non-blocking send */
-				dest = 0;
-				MPI_Isend(u1[0], numElements, MPI_DOUBLE,
-					   	dest, tag, comm_cart, &request);
-	#ifdef VERBOSE
-				printf("P%d: SENT %d doubles to master...\n",myrank, numElements);
-				fflush(stdout);
-	#endif
-			}
-		}
-	}
-
-	/* unnecessary barrier for debugging */
-	MPI_Barrier(comm_cart);
-#endif /* SENDTOMASTER */
 
 #ifdef OUTPUT /* verified to work.  Not likely to have bugs */
 	/* print the last iteration to a file */
@@ -701,7 +370,7 @@ int main(int argc, char* argv[]) {
 	#ifdef VERBOSE
 		printf("p%d Writing to output.txt....\n",myrank);
 	#endif
-		filePrintMatrix("output.txt",Uall,dom.size);
+		filePrintMatrix("output.txt",u1,dom.size);
 	#ifdef VERBOSE
 		printf("P%d: closing file\n",myrank);
 		fflush(stdout);
@@ -725,15 +394,6 @@ int main(int argc, char* argv[]) {
 	free(C);
 	free(Cdata);
 
-	if(myrank == 0){
-		free(Uall);
-		free(Ualldata);
-		free(theirDomain);
-		free(theirDomainData);
-	}
-	free(myBorder);
-	free(theirBorder);
-	free(gMaxEach);
 	free(pulseTimes);
 	
 #endif /* FREEMEMORY */
@@ -748,10 +408,6 @@ int main(int argc, char* argv[]) {
 		}
 		printf("]\n");
 	}
-	MPI_Barrier(comm_cart);
-		
-	/* finalize MPI */
-	MPI_Finalize();
 
     /* timekeeping - only needs to be executed by root*/ 
     if(myrank == 0) {
@@ -889,28 +545,3 @@ void printRow(double * array, int length){
 	printf(" ]\n");
 }
 
-int	isMyPulse(domain_t mydom, int x, int y){
-	return( (x >= mydom.xmin) & (x <= mydom.xmax) & 
-		   (y >= mydom.ymin) & (y <= mydom.ymax) );	
-}
-	
-
-/* u(l-1,i,j)       = u0
- * u(l-1,i+1,j)     = u0e     (east)
- * u(l-1,i,j+1)     = u0n     (north)
- * u(l-1,i-1,j)     = u0w     (west)
- * u(l-1,i,j-1)     = u0s     (south)
- *
- * u(l,i,j)         = u1
- * u(l,i+1,j)       = u1e     (east)
- * u(l,i,j+1)       = u1n     (north)
- * u(l,i-1,j)       = u1w     (west)
- * u(l,i,j-1)       = u1s     (south)
- * 
- * u(l+1,i,j)       = u2        (solving for this)
- * u(l+1,i+1,j)     = u2e     (east)
- * u(l+1,i,j+1)     = u2n     (north)
- * u(l+1,i-1,j)     = u2w     (west)
- * u(l+1,i,j-1)     = u2s     (south)
- */
- 
