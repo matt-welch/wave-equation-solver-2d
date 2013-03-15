@@ -143,7 +143,7 @@ int main(int argc, char* argv[]) {
 		
 #ifdef CREATEANIMATION
 	/* inefficient for everyone to initialize it, but no rank yet */
-	char fname[20] = "output";
+	char fname[20] = "outputtt";
 	char ext[]=".txt";
 #endif /* CREATEANIMATION */
 	
@@ -580,9 +580,9 @@ int main(int argc, char* argv[]) {
 			sprintf(fname+6, "%d",l+1);
 			strcat(fname, ext);
 #ifdef DEBUG
-			printf("%s\n",fname);
+			printf("Printing (%d) to: %s\n",mydom.size,fname);
 #endif
-			filePrintMatrix(fname,u1,dom.size);
+			filePrintMatrix(fname,u1,mydom.size);
 		}
 #endif /* CREATEANIMATION */
 
@@ -787,14 +787,18 @@ int main(int argc, char* argv[]) {
 /* function to print a matrix to a file */
 void filePrintMatrix(char* fname, double ** array,int length){
 	FILE * fp;
-	int i, j;
+	int i, j, count=0;
 	fp=fopen(fname, "w");
 	/* assumes there is a border row which should not be printed */
 	for(i = 1; i < length-1; ++i){ 
 	    for(j = 1; j < length-1; ++j){ 
+			count++;
 			fprintf(fp,"%4.2f\n", array[i][j]);
 	    }
 	}
+#ifdef DEBUG
+	printf("file:: len=%d, tot=%d, count=%d\n", length, (length-2)*(length-2), count);
+#endif
 	return;
 }
 /* function to check Courant-Friedrichs-Lewy condition 
