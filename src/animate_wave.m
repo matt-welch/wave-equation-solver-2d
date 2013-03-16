@@ -10,7 +10,7 @@ numframes = length(dirlist) - 2;
 load([prefix,'1.txt']);
 domSize = sqrt(length(output1));
 images = zeros(domSize,domSize,numframes); 
-imgseq = 1:2:numframes;
+imgseq = 1:20:numframes;
 
 for(j=imgseq)
     fname = ['output',num2str(j)];

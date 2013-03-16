@@ -6,9 +6,9 @@ end
 Z=reshape(Z,domSize,domSize);
 h=figure;
 if(plottype == 'mesh')
-    meshz(X,Y,Z);
+    plothandle = meshz(X,Y,Z);
 else
-    surf(X, Y, Z); % ends up with lots of black
+    plothandle = surf(X, Y, Z); % ends up with lots of black
 end
 
 azimuth = 0;%-7;
