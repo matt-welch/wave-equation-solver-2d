@@ -10,8 +10,10 @@ numframes = length(dirlist) - 2;
 load([prefix,'1.txt']);
 domSize = sqrt(length(output1));
 images = zeros(domSize,domSize,numframes); 
-imgseq = 1:20:numframes;
+imgseq = 1:5:numframes;
 
+amax = 5;
+amin = amax * -1;
 for(j=imgseq)
     fname = ['output',num2str(j)];
     fullfile = [path,fname,'.txt'];
@@ -34,8 +36,8 @@ for(j=imgseq)
 %end
 
 %for(j = imgseq)
-    amin = min(images(:,:,j));
-    amax = max(images(:,:,j));
+    %amin = min(images(:,:,j));
+    %amax = max(images(:,:,j));
     im = mat2gray(images(:,:,j), [amin, amax]);
     [imind,cm] = gray2ind(im,256);
     if(j==1)

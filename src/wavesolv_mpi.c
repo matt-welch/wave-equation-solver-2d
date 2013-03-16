@@ -52,6 +52,7 @@ double	rowMax(double * u, int rowLength);
 double	findMaxMag(double** u, int domSize);
 void	print2DArray(double **array, int length);
 void	printRow(double * array, int length);
+void	printIRow(int * array, int length);
 int		isMyPulse(domain_t mydom, int x, int y);
 
 
@@ -118,7 +119,8 @@ int main(int argc, char* argv[]) {
 	double * gMaxEach;	/* array of maxima for each node */
 	double myMaxMag;		/* gMax for each node */
 	unsigned int pulseCount = 0;	/* the number of pulses emitted, track to compare to mesh plot */
-	char * pulseTimes;	/* the time steps at which pulses happened (for debugging) */
+	int pulseRank = -1;
+	int * pulseTimes;	/* the time steps at which pulses happened (for debugging) */
 	unsigned int pulseSide = 0;		/* the side where the pulse comes from 0-3*/
 	unsigned int lastPulseX = 0;	/* coordinates of the last pulse */
 	unsigned int lastPulseY = 0;
@@ -227,7 +229,7 @@ int main(int argc, char* argv[]) {
 	   	printf("CFL = %3.3f, r = %3.3f\n", CFL, r);
 	}
 	/* allocate memory for arrays */
-	pulseTimes = malloc(sizeof(char) * tmax); 
+	pulseTimes = malloc(sizeof(int) * tmax); 
 	for (i = 0; i < tmax; i++) {
 		pulseTimes[i] = 0;
 	}
@@ -400,7 +402,7 @@ int main(int argc, char* argv[]) {
 					u1[x][y] = pulse;
 
 	#ifdef DEBUG
-					printf("==>P%d,t%d: pulse(%u)@(%d,%d,%4.2f), old=%4.2f, new=%4.2f\n"
+					printf("P%d,t%d: pulse(%u)@(%d,%d,%4.2f), old=%4.2f, new=%4.2f\n"
 							,myrank,l,pulseCount+1,pulseX,pulseY,pulse,
 							dTemp, u1[x][y]);
 	#endif
@@ -729,6 +731,24 @@ int main(int argc, char* argv[]) {
 	}
 #endif /* OUTPUT */
 
+	/* print total number of pulses */
+	if (myrank == 0) {
+		printf("P(%d) pulseCount=%u\npulseTimes[", myrank, pulseCount);
+		fflush(stdout);
+		for(i = 0; i < tmax; i++){
+			if (pulseTimes[i] > 0) {
+				printf(" %d", i);
+				fflush(stdout);
+			}
+		}
+		printf("]\n");
+		fflush(stdout);
+#ifdef VERBOSE
+		printIRow(pulseTimes, tmax);
+#endif
+	}
+	MPI_Barrier(comm_cart);
+		
 #ifdef FREEMEMORY
 	/* free memory for arrays */
 	/* free memory for u0 */
@@ -758,18 +778,6 @@ int main(int argc, char* argv[]) {
 	
 #endif /* FREEMEMORY */
 
-	/* print total number of pulses */
-	if (myrank == 0) {
-		printf("P(%d) pulseCount=%u\npulseTimes[", myrank, pulseCount);
-		for(i = 0; i < tmax; i++){
-			if (pulseTimes[i] == 1) {
-				printf(" %d", i);
-			}
-		}
-		printf("]\n");
-	}
-	MPI_Barrier(comm_cart);
-		
 	/* finalize MPI */
 	MPI_Finalize();
 
@@ -909,6 +917,17 @@ void printRow(double * array, int length){
 	printf("[ ");
 	for(j = 1; j < length; ++j){
 		printf("%4.2f ",array[j]);				
+	}
+	printf(" ]\n");
+}
+
+/* assumes no border rows */
+/* function prints a 1-D array to scraan as a row */
+void printIRow(int * array, int length){
+	int j;
+	printf("[ ");
+	for(j = 0; j < length; ++j){
+		printf("%d ",array[j]);				
 	}
 	printf(" ]\n");
 }
