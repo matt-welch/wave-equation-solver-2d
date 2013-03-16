@@ -29,7 +29,7 @@
 #define EXCHANGEDATA
 #define UPDATEDOMAIN
 #define ZEROPULSES
-#define CREATEANIMATION
+//#define CREATEANIMATION
 #define SENDTOMASTER 
 #define OUTPUT
 #define FREEMEMORY
@@ -517,7 +517,8 @@ int main(int argc, char* argv[]) {
 
 #endif /* EXCHANGEDATA */
 #ifdef UPDATEDOMAIN
-#pragma omp parallel for schedule(static)
+//#pragma omp parallel for default(shared) private(dTemp, i, j) firstprivate(chunk_size, r)
+		//#pragma omp parallel for schedule(static) private(dTemp, i, j) firstprivate(chunk_size, r) shared(u0, u1, u2)
 		/* calculate wave intensity @ each location in the domain */
 		for(i=1; i <= chunk_size; i++){
 			for(j=1; j <= chunk_size; j++){
