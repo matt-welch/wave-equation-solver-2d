@@ -28,7 +28,7 @@ elevation = 43;%90;%43;
 view(azimuth,elevation);
 title(fullfile);
 
-for(i=2:5:numframes)
+for(i=1:5:numframes)
     fname = ['output',num2str(i)];
     fullfile = [path,fname,'.txt'];
     load(fullfile)

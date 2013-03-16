@@ -24,9 +24,9 @@
 
 /* defines controlling which parts of the program are compiled */
 #define ISSUEPULSE 
-//#define ROTATEPULSE
+#define ROTATEPULSE
 #define UPDATEDOMAIN
-//#define ZEROPULSES
+#define ZEROPULSES
 #define CREATEANIMATION
 #define OUTPUT
 #define FREEMEMORY
@@ -49,6 +49,7 @@ double	rowMax(double * u, int rowLength);
 double	findMaxMag(double** u, int domSize);
 void	print2DArray(double **array, int length);
 void	printRow(double * array, int length);
+void	printIRow(int * array, int length);
 int		isMyPulse(domain_t mydom, int x, int y);
 
 
@@ -95,7 +96,7 @@ int main(int argc, char* argv[]) {
 	double  gMax;	/* maximum magnitude of the wave @ current time step for whole domain*/
 	double myMaxMag;		/* gMax for each node */
 	unsigned int pulseCount = 0;	/* the number of pulses emitted, track to compare to mesh plot */
-	char * pulseTimes;	/* the time steps at which pulses happened (for debugging) */
+	int * pulseTimes;	/* the time steps at which pulses happened (for debugging) */
 	unsigned int pulseSide = 0;		/* the side where the pulse comes from 0-3*/
 	unsigned int lastPulseX = 0;	/* coordinates of the last pulse */
 	unsigned int lastPulseY = 0;
@@ -119,7 +120,7 @@ int main(int argc, char* argv[]) {
     double preciseTime;
 
 #ifdef CREATEANIMATION
-	char fname[20] = "output";
+	char fname[20] = "outputtt";
 	char ext[]=".txt";
 #endif /* CREATEANIMATION */
 
@@ -157,10 +158,10 @@ int main(int argc, char* argv[]) {
 	pulseThresh = pulse * pulseThreshPct;
 
 	/* calculate the x & y coordinates of the node's subdomain */
-	mydom.xmin =  1;// chunk_size *  myCoords[0];
-	mydom.xmax = mydom.size; //(chunk_size * (myCoords[0]+1)) - 1;
-	mydom.ymin =  1; //chunk_size *  myCoords[1];
-	mydom.ymax = mydom.size; //(chunk_size * (myCoords[1]+1)) - 1;
+	mydom.xmin =  1;
+	mydom.xmax = chunk_size; 
+	mydom.ymin =  1; 
+	mydom.ymax = chunk_size; 
 
 	/* step sizes for t, x, & y*/
 	dt = 0.42; /* 42 */
@@ -172,7 +173,7 @@ int main(int argc, char* argv[]) {
 	   	printf("CFL = %3.3f, r = %3.3f\n", CFL, r);
 	}
 	/* allocate memory for arrays */
-	pulseTimes = malloc(sizeof(char) * tmax); 
+	pulseTimes = malloc(sizeof(int) * tmax); 
 	for (i = 0; i < tmax; i++) {
 		pulseTimes[i] = 0;
 	}
@@ -274,7 +275,7 @@ int main(int argc, char* argv[]) {
 					fflush(stdout);
 				}
 	#endif
-				if( 1 ){
+				if( 1 ){/* always my pulse */
 					/* issue only if pulse loc is in your domain */
 	#ifdef DEBUG
 					printf("==>P%d,t%d: pulse(%d,%d) is mine\n",
@@ -282,16 +283,16 @@ int main(int argc, char* argv[]) {
 					fflush(stdout);
 	#endif
 					/* narrow pulse */
-					/* pulses need to be adjusted to the local domain */
-					x = pulseX - mydom.xmin;
-					y = pulseY - mydom.ymin;
+//					/* pulses need to be adjusted to the local domain */
+//					x = pulseX - mydom.xmin;
+//					y = pulseY - mydom.ymin;
 
 					dTemp = u1[x][y];/* preserve original value */
 					u1[x][y] = 0;
 					u1[x][y] = pulse;
 
 	#ifdef DEBUG
-					printf("==>P%d,t%d: pulse(%u)@(%d,%d,%4.2f), old=%4.2f, new=%4.2f\n"
+					printf("P%d,t%d: pulse(%u)@(%d,%d,%4.2f), old=%4.2f, new=%4.2f\n"
 							,myrank,l,pulseCount+1,pulseX,pulseY,pulse,
 							dTemp, u1[x][y]);
 	#endif
@@ -306,7 +307,9 @@ int main(int argc, char* argv[]) {
 #endif		/* ISSUEPULSE */
 
 #ifdef UPDATEDOMAIN
-#pragma omp parallel for schedule(static)
+#ifdef USEUPENMP
+#pragma omp parallel for default(shared) private(dTemp, i, j) firstprivate(chunk_size, r)
+#endif
 		/* calculate wave intensity @ each location in the domain */
 		for(i=1; i <= chunk_size; i++){
 			for(j=1; j <= chunk_size; j++){
@@ -332,9 +335,8 @@ int main(int argc, char* argv[]) {
 						myrank,l, lastPulseX, lastPulseY);
 				fflush(stdout);
 	#endif
-				/* Kills need to be adjusted to the local domain */
-				x = lastPulseX - mydom.xmin;
-				y = lastPulseY - mydom.ymin;
+				x = lastPulseX;
+				y = lastPulseY;
 
 				dTemp = u1[x][y];/* preserve original value */
 				u1[x][y] = 0;
@@ -360,7 +362,7 @@ int main(int argc, char* argv[]) {
 		sprintf(fname+6, "%d",l+1);
 		strcat(fname, ext);
 #ifdef DEBUG
-		printf("%s\n",fname);
+			printf("Printing (%d) to: %s\n",mydom.size,fname);
 #endif
 		filePrintMatrix(fname,u1,dom.size);
 #endif /* CREATEANIMATION */
@@ -381,6 +383,22 @@ int main(int argc, char* argv[]) {
 	}
 #endif /* OUTPUT */
 
+	/* print total number of pulses */
+	if (myrank == 0) {
+		printf("P(%d) pulseCount=%u\npulseTimes[", myrank, pulseCount);
+		fflush(stdout);
+		for(i = 0; i < tmax; i++){
+			if (pulseTimes[i] > 0) {
+				printf(" %d", i);
+				fflush(stdout);
+			}
+		}
+		printf("]\n");
+		fflush(stdout);
+#ifdef VERBOSE
+		printIRow(pulseTimes, tmax);
+#endif
+	}
 #ifdef FREEMEMORY
 	/* free memory for arrays */
 	/* free memory for u0 */
@@ -401,16 +419,6 @@ int main(int argc, char* argv[]) {
 	
 #endif /* FREEMEMORY */
 
-	/* print total number of pulses */
-	if (myrank == 0) {
-		printf("P(%d) pulseCount=%u\npulseTimes[", myrank, pulseCount);
-		for(i = 0; i < tmax; i++){
-			if (pulseTimes[i] == 1) {
-				printf(" %d", i);
-			}
-		}
-		printf("]\n");
-	}
 
     /* timekeeping - only needs to be executed by root*/ 
     if(myrank == 0) {
@@ -427,14 +435,18 @@ int main(int argc, char* argv[]) {
 /* function to print a matrix to a file */
 void filePrintMatrix(char* fname, double ** array,int length){
 	FILE * fp;
-	int i, j;
+	int i, j, count=0;
 	fp=fopen(fname, "w");
 	/* assumes there is a border row which should not be printed */
 	for(i = 1; i < length-1; ++i){ 
 	    for(j = 1; j < length-1; ++j){ 
+			count++;
 			fprintf(fp,"%4.2f\n", array[i][j]);
 	    }
 	}
+#ifdef DEBUG
+	printf("file:: len=%d, tot=%d, count=%d\n", length, (length-2)*(length-2), count);
+#endif
 	return;
 }
 /* function to check Courant-Friedrichs-Lewy condition 
@@ -544,6 +556,17 @@ void printRow(double * array, int length){
 	printf("[ ");
 	for(j = 1; j < length; ++j){
 		printf("%4.2f ",array[j]);				
+	}
+	printf(" ]\n");
+}
+
+/* assumes no border rows */
+/* function prints a 1-D array to scraan as a row */
+void printIRow(int * array, int length){
+	int j;
+	printf("[ ");
+	for(j = 0; j < length; ++j){
+		printf("%d ",array[j]);				
 	}
 	printf(" ]\n");
 }

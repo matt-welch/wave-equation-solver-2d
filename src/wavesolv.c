@@ -87,7 +87,7 @@ int main(int argc, char* argv[]) {
 	double maxMag;				/* maximum magnitude of the wave @ current time step */
 	double myMaxMag;		/* max mag over my domain */
 	int pulseCount = 0;	/* the number of pulses emitted, track to compare to mesh plot */
-	char * pulseTimes;	/* the time steps at which pulses happened (for debugging) */
+	int * pulseTimes;	/* the time steps at which pulses happened (for debugging) */
 	unsigned int pulseSide = 0;		/* the side where the pulse comes from 0-3*/
 	unsigned int lastPulseX = 0;	/* coordinates of the last pulse */
 	unsigned int lastPulseY = 0;
@@ -138,7 +138,7 @@ int main(int argc, char* argv[]) {
 
 	if(myrank==0) printf("CFL = %3.3f\n", CFL);
 	/* allocate memory for arrays */
-	pulseTimes = malloc(sizeof(char) * tmax); 
+	pulseTimes = malloc(sizeof(int) * tmax); 
 
 	/* allocate contiguous memory for array  */
 	numElements	   = myDomSize * myDomSize;
