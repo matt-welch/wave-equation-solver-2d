@@ -1,3 +1,14 @@
+%*******************************************************************************
+% * FILENAME:    plot_wave.m
+% * DESCRIPTION: Plots a single mesh of a 2-D wave domain
+% * AUTHOR:      James Matthew Welch [JMW]
+% * SCHOOL:      Arizona State University
+% * CLASS:       CSE598: High Performance Computing
+% * INSTRUCTOR:  Dr. Gil Speyer
+% * SECTION:     20520
+% * TERM:        Spring 2013
+% *******************************************************************************/
+
 close all
 clear all
 %path = '~/saguaroASU/cse598-HPC/p2/src/';

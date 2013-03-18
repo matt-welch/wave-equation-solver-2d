@@ -1,5 +1,5 @@
 /*******************************************************************************
- * FILENAME:    wavesolv.c
+ * FILENAME:    wavesolv_serial.c
  * DESCRIPTION: 2D wave equation solver using MPI and OpenMP
  * AUTHOR:      James Matthew Welch [JMW]
  * SCHOOL:      Arizona State University
