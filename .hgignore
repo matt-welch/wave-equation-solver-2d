@@ -12,7 +12,7 @@ CSE494Project2S13\(1\).pdf
 output.txt
 domain_analysis.xls
 allocateArray.c
-output*
+*output*
 *.tar.gz
 Session.vim
 questions
@@ -20,4 +20,7 @@ questions
 *practice*
 Welch*
 *.gif
+report*
+saguaro*
+*results*
 

@@ -1,3 +1,14 @@
+%*******************************************************************************
+% * FILENAME:    animate_wave.m
+% * DESCRIPTION: animated gif creator from a series of outputN.txt
+% * AUTHOR:      James Matthew Welch [JMW]
+% * SCHOOL:      Arizona State University
+% * CLASS:       CSE598: High Performance Computing
+% * INSTRUCTOR:  Dr. Gil Speyer
+% * SECTION:     20520
+% * TERM:        Spring 2013
+% *******************************************************************************/
+
 close all
 clear all
 %path = '~/saguaroASU/cse598-HPC/p2/src/';
@@ -10,7 +21,7 @@ numframes = length(dirlist) - 2;
 load([prefix,'1.txt']);
 domSize = sqrt(length(output1));
 images = zeros(domSize,domSize,numframes); 
-imgseq = 1:5:numframes;
+imgseq = 1:10:numframes;
 
 amax = 5;
 amin = amax * -1;

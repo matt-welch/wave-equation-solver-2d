@@ -1,5 +1,5 @@
 /*******************************************************************************
- * FILENAME:    wavesolv.c
+ * FILENAME:    wavesolv_mpi.c
  * DESCRIPTION: 2D wave equation solver using MPI and OpenMP
  * AUTHOR:      James Matthew Welch [JMW]
  * SCHOOL:      Arizona State University
@@ -31,7 +31,7 @@
 #define ZEROPULSES
 //#define CREATEANIMATION
 #define SENDTOMASTER 
-#define OUTPUT
+//#define OUTPUT
 #define FREEMEMORY
 
 /* define that controls how arrays are accessed */
@@ -158,7 +158,7 @@ int main(int argc, char* argv[]) {
 	MPI_Comm_size( MPI_COMM_WORLD, &numprocs);
 
 	/* figure out dimensions bases on numproc */
-	if(numprocs == 1 || numprocs == 4 || numprocs == 16 || numprocs == 256 ){
+	if(numprocs == 1 || numprocs == 4 || numprocs == 16 || numprocs == 64 ||  numprocs == 256 ){
 		/* squares are easy to partition */
 		dims[0] = dims[1] = (int)sqrt(numprocs); /* square domain */
 		if(myrank==0) printf("NumProcs = %d, proc/side = %d\n", numprocs, dims[0]);
@@ -519,7 +519,9 @@ int main(int argc, char* argv[]) {
 
 #endif /* EXCHANGEDATA */
 #ifdef UPDATEDOMAIN
-//#pragma omp parallel for default(shared) private(dTemp, i, j) firstprivate(chunk_size, r)
+#ifdef USEOPENMP
+#pragma omp parallel for default(shared) private(dTemp, i, j) firstprivate(chunk_size, r)
+#endif
 		//#pragma omp parallel for schedule(static) private(dTemp, i, j) firstprivate(chunk_size, r) shared(u0, u1, u2)
 		/* calculate wave intensity @ each location in the domain */
 		for(i=1; i <= chunk_size; i++){
@@ -802,7 +804,7 @@ void filePrintMatrix(char* fname, double ** array,int length){
 	for(i = 1; i < length-1; ++i){ 
 	    for(j = 1; j < length-1; ++j){ 
 			count++;
-			fprintf(fp,"%4.2f\n", array[i][j]);
+			fprintf(fp,"%d\t%d\t%4.8f\n", i, j, array[i][j]);
 	    }
 	}
 #ifdef DEBUG

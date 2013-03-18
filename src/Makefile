@@ -9,13 +9,17 @@
 # * TERM:        Spring 2013
 # *******************************************************************************/
 #
-all: wavesolv_mpi wavesolv
+all: mpi serial
+
+mpi: wavesolv_mpi 
+
+serial: wavesolv
 
 wavesolv: wavesolv_serial.c 
 	gcc wavesolv_serial.c -o wavesolv $(CONFIG)
 
 wavesolv_mpi: wavesolv_mpi.c
-	mpicc wavesolv_mpi.c -o wavesolv_mpi $(CONFIG) $(PARCONFIG)
+	mpicc wavesolv_mpi.c -o wavesolv_mpi $(CONFIG)
 	ctags --c-kinds=+defglmpstux *.c
 
 parallel: wavesolv_serial.c wavesolv_mpi.c
@@ -30,13 +34,15 @@ wavesolv_mpi.o: wavesolv_mpi.c
 	mpicc.mpich2 wavesolv_mpi.c -o wavesolv_mpi $(CONFIG) 
 
 # compile mpi program with logging to use in JumpShot
-log: wavesolv_mpi.o
-	mpicc.mpich2  wavesolv_mpi.o -o wavesolv_mpi -mpe=mpilog -lm
-# 	module load mvapich2/1.5-gnu
-#	mpicc wavesolv_mpi.o -o wavesolv_mpi -mpe=mpilog -lm
+log: wavesolv_mpi.c
+	mpicc  wavesolv_mpi.c -o wavesolv_mpi_log -lm -mpe=mpilog
+
+profile: wavesolv_mpi.c
+	mpicc wavesolv_mpi.c -o wavesolv_mpi_omp_prof -pg $(CONFIG) $(PARCONFIG) 
+	mpicc wavesolv_mpi.c -o wavesolv_mpi_prof -pg $(CONFIG) 
 
 clean:
-	rm -f wavesolv wavesolv_mpi *.o core core.*
+	rm -f wavesolv wavesolv_mpi wavesolv_omp wavesolv_mpi_omp *.o core core.*
 
 tidy: clean
 	rm -f *.*~ *~ *.asv output*
@@ -59,4 +65,4 @@ test: wavesolv wavesolv_mpi
 	./wavesolv 100 100
 
 runmpi: debug 
-	mpiexec -n 4 ./wavesolv_mpi 
+	mpiexec -n 4 -comm=pmi ./wavesolv_mpi 
